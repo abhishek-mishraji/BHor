@@ -1,0 +1,80 @@
+%%{init: {"theme": "forest", "themeVariables": {"primaryColor": "#f2f2f2", "primaryBorderColor": "#e61010", "primaryTextColor": "#01060d", "lineColor": "#0856f3", "fontFamily": "Arial"}}}%%
+erDiagram
+	CLIENT_USERS ||--o{ STORES : client_id
+	STORES ||--o{ DAILY_REPORTS : store_id
+	STORES ||--o{ MONTHLY_REPORTS : store_id
+	STORES ||--o{ YEARLY_REPORTS : store_id
+
+	ADMIN_USERS {
+		Long admin_id PK
+		String full_name
+		String email
+		String password_hash
+		UserRole role
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
+
+	CLIENT_USERS {
+		Long client_id PK
+		String full_name
+		String email
+		String password_hash
+		String phone_number
+		String address
+		Status status
+		UserRole role
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
+
+	STORES {
+		Long store_id PK
+		Long client_id FK
+		String store_name
+		String store_code
+		String address
+		String contact_number
+		Status status
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
+
+	DAILY_REPORTS {
+		Long daily_report_id PK
+		Long store_id FK
+		LocalDate report_date
+		BigDecimal grocery_total
+		BigDecimal volume
+		BigDecimal cash_deposit
+		BigDecimal check_deposit
+		BigDecimal over_short
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
+
+	MONTHLY_REPORTS {
+		Long monthly_report_id PK
+		Long store_id FK
+		Integer report_month
+		Integer report_year
+		Integer department_id
+		String department_name
+		BigDecimal gross
+		BigDecimal discount
+		BigDecimal promotion
+		BigDecimal refund
+		BigDecimal void_amount
+		BigDecimal net_sales
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
+
+	YEARLY_REPORTS {
+		Long yearly_report_id PK
+		Long store_id FK
+		Integer report_year
+		String annual_summary
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
