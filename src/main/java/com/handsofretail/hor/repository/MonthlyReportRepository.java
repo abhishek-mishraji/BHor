@@ -13,4 +13,6 @@ public interface MonthlyReportRepository
         List<MonthlyReport> findByStoreStoreId(Long storeId);
 
         List<MonthlyReport> findByStoreClientClientId(Long clientId);
+
+        long deleteByStoreStoreIdAndReportMonthAndReportYear(Long storeId, Integer reportMonth, Integer reportYear);
 }

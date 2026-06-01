@@ -54,6 +54,9 @@ dependencies {
 	testImplementation("org.springframework.security:spring-security-test")
 
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	implementation("org.apache.poi:poi:5.3.0")
+    implementation("org.apache.poi:poi-ooxml:5.3.0")
 }
 
 tasks.withType<Test> {

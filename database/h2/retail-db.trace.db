@@ -86,3 +86,9 @@ Caused by: org.h2.jdbc.JdbcSQLNonTransientConnectionException: The connection wa
 	at org.h2.message.DbException.getJdbcSQLException(DbException.java:690)
 	at org.h2.message.DbException.getJdbcSQLException(DbException.java:489)
 	... 16 more
+2026-06-01 23:08:40.631406+05:30 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM monthly_reports where stored_id=[*]=33"; expected "ALL (, ANY (, SOME ("; SQL statement:
+SELECT * FROM monthly_reports where stored_id==33 [42001-232]
+2026-06-01 23:08:54.818476+05:30 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM monthly_reports where store_id=[*]=33"; expected "ALL (, ANY (, SOME ("; SQL statement:
+SELECT * FROM monthly_reports where store_id==33 [42001-232]
