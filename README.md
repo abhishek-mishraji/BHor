@@ -52,3 +52,11 @@ Notes & best practices
 - Do not commit `.env` or `.env.prod` — add them to `.gitignore`.
 - Use `JPA_HIBERNATE_DDL_AUTO=update` only for local development; use `validate` in production and manage schema changes with Flyway or Liquibase.
 - For production secrets, prefer your cloud provider's secret store over files on disk.
+
+# Gradle bootRun
+
+./gradlew.bat bootRun --args='--spring.profiles.active=prod'
+
+# Or run packaged jar
+
+java -jar build/libs/your-app.jar --spring.profiles.active=prod
