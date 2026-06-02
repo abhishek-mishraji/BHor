@@ -1,5 +1,4 @@
 #Testing
-#From local
 
 # Hands Of Retail — Run & Environment
 
