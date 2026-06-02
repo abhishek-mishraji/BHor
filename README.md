@@ -1,3 +1,6 @@
+#Testing
+#From local
+
 # Hands Of Retail — Run & Environment
 
 Quick instructions to run the application locally (H2) and in production (MySQL / DigitalOcean).
