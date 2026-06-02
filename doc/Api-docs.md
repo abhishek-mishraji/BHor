@@ -490,6 +490,56 @@ Update monthly report.
 
 ---
 
+## 17.a Upload Monthly Reports (Bulk)
+
+### Endpoint
+
+```http
+POST /api/v1/admin/monthly-reports/upload
+```
+
+### Purpose
+
+Upload monthly reports in bulk — the API accepts a single Excel `.xlsx` file only. The upload endpoint validates each row and supports an optional `overwrite` flag to replace existing records.
+
+### Request
+
+- Content-Type: `multipart/form-data`
+- Form field `file`: Excel `.xlsx` file containing monthly report rows (single file only)
+- Optional query param: `overwrite` (boolean)
+
+Example curl:
+
+```bash
+curl -X POST "http://localhost:8080/api/v1/admin/monthly-reports/upload?overwrite=false" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "file=@monthly-reports.xlsx"
+```
+
+### Response
+
+Success response returns a summary of processed rows and any validation errors for rows that failed to import.
+
+```json
+{
+  "success": true,
+  "message": "File processed",
+  "data": {
+    "processed": 120,
+    "imported": 115,
+    "failed": 5,
+    "errors": [
+      { "row": 23, "error": "Missing departmentId" },
+      { "row": 78, "error": "Invalid reportMonth value" }
+    ]
+  },
+  "errors": {},
+  "timestamp": "2026-05-28T14:20:00.000Z"
+}
+```
+
+---
+
 # Yearly Report APIs (Admin)
 
 ## 18. Create Yearly Report

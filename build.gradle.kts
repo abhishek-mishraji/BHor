@@ -57,6 +57,7 @@ dependencies {
 
 	implementation("org.apache.poi:poi:5.3.0")
     implementation("org.apache.poi:poi-ooxml:5.3.0")
+	implementation("org.flywaydb:flyway-core:9.20.0")
 }
 
 tasks.withType<Test> {

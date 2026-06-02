@@ -221,6 +221,11 @@ public class MonthlyReportServiceImpl
                         throw new BadRequestException("Excel file is required");
                 }
 
+                String originalFilename = file.getOriginalFilename();
+                if (originalFilename == null || !originalFilename.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
+                        throw new BadRequestException("Only .xlsx Excel files are accepted");
+                }
+
                 Store store = storeRepository
                                 .findById(storeId)
                                 .orElseThrow(() -> new ResourceNotFoundException("Store not found"));

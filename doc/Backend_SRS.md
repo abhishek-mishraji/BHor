@@ -125,6 +125,7 @@ FR-18: The system shall allow client users to retrieve daily reports only for st
 ### 4.5 Monthly Reports
 
 FR-19: The system shall allow administrators to create monthly reports for a store.
+FR-19a: The system shall allow administrators to upload monthly reports in bulk via a file upload. The upload endpoint shall accept a single Excel `.xlsx` file only. The upload process shall validate each row, persist valid records, and return a summary with per-row errors for invalid rows.
 
 FR-20: The system shall allow administrators to retrieve monthly reports filtered by store, client, year, and month.
 
@@ -255,6 +256,7 @@ The backend listens on port 8080 and serves REST APIs under `/api/v1`.
 - `GET /api/v1/admin/monthly-reports`
 - `GET /api/v1/admin/monthly-reports/store/{storeId}`
 - `PUT /api/v1/admin/monthly-reports/{monthlyReportId}`
+- `POST /api/v1/admin/monthly-reports/upload`
 - `POST /api/v1/admin/yearly-reports`
 - `GET /api/v1/admin/yearly-reports`
 - `GET /api/v1/admin/yearly-reports/store/{storeId}`
