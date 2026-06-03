@@ -39,9 +39,9 @@ dependencies {
 
 	implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
 
-	implementation("com.h2database:h2")
+	runtimeOnly("com.h2database:h2")
 
-	runtimeOnly("com.mysql:mysql-connector-j")
+	runtimeOnly("org.postgresql:postgresql")
 
 	compileOnly("org.projectlombok:lombok")
 

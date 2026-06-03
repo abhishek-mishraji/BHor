@@ -1,12 +1,11 @@
 package com.handsofretail.hor.security.jwt;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -16,65 +15,79 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.Key;
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.Collections;
 
+/**
+ * Reads the access token from an HttpOnly cookie (not the Authorization header).
+ * JwtService is the only dependency — no JPA, no circular dependency risk.
+ */
 @Component
+@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    @Value("${jwt.secret}")
-    private String jwtSecret;
+    private final JwtService jwtService;
 
-    private Key getSigningKey() {
-        return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
-    }
+    @Value("${jwt.access-cookie.name:access_token}")
+    private String accessCookieName;
 
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
-        String authHeader = request.getHeader("Authorization");
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+        String token = extractAccessTokenCookie(request);
+
+        if (token == null) {
+            // No access cookie present — let Spring Security handle the unauthenticated case
             filterChain.doFilter(request, response);
             return;
         }
 
-        String token = authHeader.substring(7);
+        if (!jwtService.isAccessTokenValid(token)) {
+            writeUnauthorized(response, "Access token expired — please refresh");
+            return;
+        }
 
         try {
+            String email = jwtService.extractEmail(token);
+            String role  = jwtService.extractRole(token);
 
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-
-            String email = claims.getSubject();
-
-            String role = claims.get("role", String.class);
-
-            UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
+            UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                     email,
                     null,
-                    Collections.singletonList(
-                            new SimpleGrantedAuthority("ROLE_" + role)));
+                    Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + role)));
 
-            authenticationToken.setDetails(
-                    new WebAuthenticationDetailsSource()
-                            .buildDetails(request));
-
-            SecurityContextHolder.getContext()
-                    .setAuthentication(authenticationToken);
+            authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+            SecurityContextHolder.getContext().setAuthentication(authToken);
 
         } catch (Exception e) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.getWriter().write("Invalid JWT Token");
+            writeUnauthorized(response, "Invalid access token");
             return;
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────
+
+    private String extractAccessTokenCookie(HttpServletRequest request) {
+        if (request.getCookies() == null) return null;
+        return Arrays.stream(request.getCookies())
+                .filter(c -> accessCookieName.equals(c.getName()))
+                .map(Cookie::getValue)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void writeUnauthorized(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json");
+        response.getWriter().write(
+                "{\"success\":false,\"message\":\"" + message + "\",\"timestamp\":\"" + Instant.now() + "\"}");
     }
 }

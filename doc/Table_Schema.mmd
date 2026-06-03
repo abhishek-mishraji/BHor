@@ -4,6 +4,8 @@ erDiagram
 	STORES ||--o{ DAILY_REPORTS : store_id
 	STORES ||--o{ MONTHLY_REPORTS : store_id
 	STORES ||--o{ YEARLY_REPORTS : store_id
+	ADMIN_USERS ||--o{ REFRESH_TOKENS : user_email
+	CLIENT_USERS ||--o{ REFRESH_TOKENS : user_email
 
 	ADMIN_USERS {
 		Long admin_id PK
@@ -26,6 +28,16 @@ erDiagram
 		UserRole role
 		LocalDateTime created_at
 		LocalDateTime updated_at
+	}
+
+	REFRESH_TOKENS {
+		Long id PK
+		String token_hash "SHA-256 hash of raw token"
+		String user_email
+		String user_role
+		LocalDateTime expires_at
+		Boolean revoked
+		LocalDateTime created_at
 	}
 
 	STORES {
