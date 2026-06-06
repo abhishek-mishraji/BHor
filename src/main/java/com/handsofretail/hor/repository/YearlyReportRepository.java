@@ -11,6 +11,4 @@ public interface YearlyReportRepository
                 extends JpaRepository<YearlyReport, Long>, JpaSpecificationExecutor<YearlyReport> {
 
         List<YearlyReport> findByStoreStoreId(Long storeId);
-
-        List<YearlyReport> findByStoreClientClientId(Long clientId);
 }

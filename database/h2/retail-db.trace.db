@@ -1,34 +1,8 @@
-2026-06-04 00:27:01.050098+05:30 jdbc[13]: exception
-org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM admin_users\000d\000a[*]SELECT  * FROM client_users"; SQL statement:
+2026-06-07 00:50:08.884692+05:30 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM admin_users\000d\000a[*]SELECT * FROM STORES"; SQL statement:
 SELECT * FROM admin_users
-SELECT  * FROM client_users [42000-232]
-2026-06-04 00:27:08.042896+05:30 jdbc[13]: exception
-org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM admin_users\000d\000a[*]SELECT  * FROM client_users"; SQL statement:
+SELECT * FROM STORES [42000-232]
+2026-06-07 00:50:23.121224+05:30 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM admin_users\000d\000a[*]SELECT * FROM stores"; SQL statement:
 SELECT * FROM admin_users
-SELECT  * FROM client_users [42000-232]
-2026-06-04 00:27:31.802339+05:30 jdbc[13]: exception
-org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM admin_users\000d\000a[*]SELECT * FROM client_users"; SQL statement:
-SELECT * FROM admin_users
-SELECT * FROM client_users [42000-232]
-2026-06-04 02:01:01.205868+05:30 jdbc[15]: null
-org.h2.message.DbException: The connection was not closed by the application and is garbage collected [90018-232]
-	at org.h2.message.DbException.get(DbException.java:223)
-	at org.h2.message.DbException.get(DbException.java:199)
-	at org.h2.message.DbException.get(DbException.java:188)
-	at org.h2.jdbc.JdbcConnection.closeOld(JdbcConnection.java:217)
-	at org.h2.jdbc.JdbcConnection.<init>(JdbcConnection.java:134)
-	at org.h2.Driver.connect(Driver.java:59)
-	at com.zaxxer.hikari.util.DriverDataSource.getConnection(DriverDataSource.java:137)
-	at com.zaxxer.hikari.pool.PoolBase.newConnection(PoolBase.java:360)
-	at com.zaxxer.hikari.pool.PoolBase.newPoolEntry(PoolBase.java:202)
-	at com.zaxxer.hikari.pool.HikariPool.createPoolEntry(HikariPool.java:461)
-	at com.zaxxer.hikari.pool.HikariPool$PoolEntryCreator.call(HikariPool.java:724)
-	at com.zaxxer.hikari.pool.HikariPool$PoolEntryCreator.call(HikariPool.java:703)
-	at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:317)
-	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
-	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
-	at java.base/java.lang.Thread.run(Thread.java:1583)
-Caused by: org.h2.jdbc.JdbcSQLNonTransientConnectionException: The connection was not closed by the application and is garbage collected [90018-232]
-	at org.h2.message.DbException.getJdbcSQLException(DbException.java:690)
-	at org.h2.message.DbException.getJdbcSQLException(DbException.java:489)
-	... 16 more
+SELECT * FROM stores [42000-232]

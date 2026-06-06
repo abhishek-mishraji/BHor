@@ -1,7 +1,7 @@
 # Software Requirements Specification — Hands Of Retail Backend API
 
-**Version:** 2.0  
-**Date:** 2026-06-06  
+**Version:** 2.1  
+**Date:** 2026-06-07  
 **Base URL:** `http://localhost:8080`  
 **Content-Type:** `application/json` (unless noted otherwise)  
 **Auth Scheme:** HttpOnly Cookies (`access_token` + `refresh_token`)
@@ -1019,21 +1019,30 @@ PATCH /api/v1/admin/stores/1/status?status=INACTIVE
 
 ### 7.4 Admin — Store Member Management
 
-These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot be added or removed via these endpoints — use `POST /admin/stores` or `PUT /admin/stores/{storeId}` to set the OWNER.
+These endpoints manage the `CLIENT_STORE_MAPPING` junction table via the dedicated `/api/v1/admin/store-members` resource.
+
+- An OWNER can be assigned via `POST /api/v1/admin/store-members` **only if the store has no existing OWNER**.
+- Once set, the OWNER cannot be removed through these endpoints — use `PUT /api/v1/admin/stores/{storeId}` to reassign ownership.
+- Multiple PARTNERs can be added and removed freely.
 
 ---
 
-#### `GET /api/v1/admin/stores/{storeId}/members`
+#### `GET /api/v1/admin/store-members`
 
 **Purpose:** List all clients (OWNER and PARTNERs) associated with a store.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Parameters
+##### Query Parameters
 
 | Name      | Type   | Required | Description          |
 |-----------|--------|----------|----------------------|
 | `storeId` | `Long` | ✅        | Store's primary key  |
+
+**Example:**
+```
+GET /api/v1/admin/store-members?storeId=1
+```
 
 ##### Success Response — `200 OK`
 
@@ -1043,11 +1052,13 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
   "message": "Store members fetched",
   "data": [
     {
+      "storeId": 1,
       "clientId": 1,
       "clientName": "John Doe",
       "role": "OWNER"
     },
     {
+      "storeId": 1,
       "clientId": 3,
       "clientName": "Alice Brown",
       "role": "PARTNER"
@@ -1061,6 +1072,7 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
 
 | Field        | Type     | Description                      |
 |--------------|----------|----------------------------------|
+| `storeId`    | `Long`   | Store's primary key              |
 | `clientId`   | `Long`   | Client's primary key             |
 | `clientName` | `string` | Client's full name               |
 | `role`       | `string` | `OWNER` or `PARTNER`             |
@@ -1075,19 +1087,13 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
 
 ---
 
-#### `POST /api/v1/admin/stores/{storeId}/members`
+#### `POST /api/v1/admin/store-members`
 
-**Purpose:** Add a PARTNER client to a store.  
+**Purpose:** Add a client to a store with the specified role. `storeId` is provided in the request body, not the URL.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `201 Created`
 
-> Role `OWNER` is rejected by this endpoint. To change the OWNER use `PUT /api/v1/admin/stores/{storeId}`.
-
-##### Path Parameters
-
-| Name      | Type   | Required | Description          |
-|-----------|--------|----------|----------------------|
-| `storeId` | `Long` | ✅        | Store's primary key  |
+> `OWNER` is accepted only when the store has no existing owner. To **reassign** ownership use `PUT /api/v1/admin/stores/{storeId}`.
 
 ##### Request Headers
 
@@ -1097,13 +1103,15 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
 
 ##### Request Body
 
-| Field      | Type        | Required | Validation                                         |
-|------------|-------------|----------|----------------------------------------------------|
-| `clientId` | `Long`      | ✅        | Must not be null; client must exist                |
-| `role`     | `StoreRole` | ✅        | Must be `PARTNER` (submitting `OWNER` returns 400) |
+| Field      | Type        | Required | Validation                                              |
+|------------|-------------|----------|---------------------------------------------------------|
+| `storeId`  | `Long`      | ✅        | Must not be null; store must exist                      |
+| `clientId` | `Long`      | ✅        | Must not be null; client must exist                     |
+| `role`     | `StoreRole` | ✅        | `OWNER` or `PARTNER`; `OWNER` rejected if one exists    |
 
 ```json
 {
+  "storeId": 1,
   "clientId": 3,
   "role": "PARTNER"
 }
@@ -1114,8 +1122,9 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
 ```json
 {
   "success": true,
-  "message": "Store member added",
+  "message": "Store member added successfully",
   "data": {
+    "storeId": 1,
     "clientId": 3,
     "clientName": "Alice Brown",
     "role": "PARTNER"
@@ -1124,23 +1133,32 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
 }
 ```
 
+##### Response `data` Fields
+
+| Field        | Type     | Description                       |
+|--------------|----------|-----------------------------------|
+| `storeId`    | `Long`   | ID of the store                   |
+| `clientId`   | `Long`   | ID of the added client            |
+| `clientName` | `string` | Full name of the added client     |
+| `role`       | `string` | `OWNER` or `PARTNER`              |
+
 ##### Error Responses
 
-| Status | Scenario                                 | `message`                                       |
-|--------|------------------------------------------|-------------------------------------------------|
-| `400`  | Null `clientId` or `role`                | `"Validation failed"` + `errors` map           |
-| `400`  | `role` is `OWNER`                        | `"Cannot assign OWNER role through this endpoint"` |
-| `400`  | Client is already a member of this store | `"Client is already a member of this store"`   |
-| `401`  | Missing / invalid JWT                    | `"Authentication required"`                     |
-| `403`  | Not an ADMIN                             | `"Access denied"`                               |
-| `404`  | Store ID not found                       | `"Store not found with id: 99"`                 |
-| `404`  | `clientId` not found                     | `"Client not found with id: 99"`                |
+| Status | Scenario                                    | `message`                                       |
+|--------|---------------------------------------------|-------------------------------------------------|
+| `400`  | Null `storeId`, `clientId`, or `role`       | `"Validation failed"` + `errors` map           |
+| `400`  | `role` is `OWNER` and store already has one | `"Store already has an owner"`                  |
+| `401`  | Missing / invalid JWT                       | `"Authentication required"`                     |
+| `403`  | Not an ADMIN                                | `"Access denied"`                               |
+| `404`  | `storeId` not found                         | `"Store not found with id: 99"`                 |
+| `404`  | `clientId` not found                        | `"Client not found with id: 99"`                |
+| `409`  | Mapping already exists                      | `"Client is already assigned to this store"`    |
 
 ---
 
-#### `DELETE /api/v1/admin/stores/{storeId}/members/{clientId}`
+#### `DELETE /api/v1/admin/store-members/{storeId}/{clientId}`
 
-**Purpose:** Remove a PARTNER client from a store. Removing the OWNER is not permitted.  
+**Purpose:** Remove a client from a store. Removing the OWNER is not permitted — reassign ownership first.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
@@ -1151,25 +1169,30 @@ These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot b
 | `storeId`  | `Long` | ✅        | Store's primary key                 |
 | `clientId` | `Long` | ✅        | Client ID of the member to remove   |
 
+**Example:**
+```
+DELETE /api/v1/admin/store-members/1/3
+```
+
 ##### Success Response — `200 OK`
 
 ```json
 {
   "success": true,
-  "message": "Store member removed",
+  "message": "Store member removed successfully",
   "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                          | `message`                             |
-|--------|-----------------------------------|---------------------------------------|
-| `400`  | Attempting to remove the OWNER    | `"Cannot remove the store owner"`     |
-| `401`  | Missing / invalid JWT             | `"Authentication required"`           |
-| `403`  | Not an ADMIN                      | `"Access denied"`                     |
-| `404`  | Store ID not found                | `"Store not found with id: 99"`       |
-| `404`  | Client is not a member            | `"Member not found"`                  |
+| Status | Scenario                          | `message`                                                      |
+|--------|-----------------------------------|----------------------------------------------------------------|
+| `400`  | Attempting to remove the OWNER    | `"Cannot remove the OWNER from a store. Reassign ownership first."` |
+| `401`  | Missing / invalid JWT             | `"Authentication required"`                                    |
+| `403`  | Not an ADMIN                      | `"Access denied"`                                              |
+| `404`  | Store ID not found                | `"Store not found with id: 99"`                                |
+| `404`  | Client is not a member            | `"Client 3 is not a member of store 1"`                        |
 
 ---
 
@@ -2359,7 +2382,7 @@ No request body or query parameters. The client identity is extracted from the J
 | BR-4  | A client can be a PARTNER in multiple stores                                                                             |
 | BR-5  | A client can simultaneously be the OWNER of one store and a PARTNER in another                                           |
 | BR-6  | Both OWNER and PARTNER clients can access store reports (daily, monthly, yearly)                                         |
-| BR-7  | The OWNER of a store cannot be removed via the members endpoint; OWNER can only be changed via `PUT /admin/stores/{id}` |
+| BR-7  | The OWNER of a store cannot be removed via the store-members endpoint. A new OWNER can be added via `POST /admin/store-members` only if the store has no existing OWNER. To reassign ownership use `PUT /admin/stores/{id}` |
 | BR-8  | A store can have multiple daily, monthly, and yearly reports                                                             |
 | BR-9  | CLIENT users can only access stores and reports where they have a mapping in `CLIENT_STORE_MAPPING`                      |
 | BR-10 | ADMIN users can access and manage all data regardless of client ownership                                                |
@@ -2388,9 +2411,9 @@ No request body or query parameters. The client identity is extracted from the J
 | 9  | `GET`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Get store by ID                         |
 | 10 | `PUT`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Update store (optionally reassign OWNER)|
 | 11 | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`                     | ADMIN   | Toggle store status                     |
-| 12 | `GET`    | `/api/v1/admin/stores/{storeId}/members`                    | ADMIN   | List store members (OWNER + PARTNERs)   |
-| 13 | `POST`   | `/api/v1/admin/stores/{storeId}/members`                    | ADMIN   | Add PARTNER to store                    |
-| 14 | `DELETE` | `/api/v1/admin/stores/{storeId}/members/{clientId}`         | ADMIN   | Remove PARTNER from store               |
+| 12 | `GET`    | `/api/v1/admin/store-members?storeId={id}`                  | ADMIN   | List store members (OWNER + PARTNERs)   |
+| 13 | `POST`   | `/api/v1/admin/store-members`                               | ADMIN   | Add member to store (body has storeId)  |
+| 14 | `DELETE` | `/api/v1/admin/store-members/{storeId}/{clientId}`          | ADMIN   | Remove member from store                |
 | 15 | `POST`   | `/api/v1/admin/daily-reports`                               | ADMIN   | Create daily report                     |
 | 16 | `GET`    | `/api/v1/admin/daily-reports`                               | ADMIN   | Get daily reports (filterable)          |
 | 17 | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`               | ADMIN   | Get daily reports by store              |

@@ -6,11 +6,11 @@ import com.handsofretail.hor.dto.response.ClientUserResponse;
 import com.handsofretail.hor.entity.ClientUser;
 import com.handsofretail.hor.enums.Status;
 import com.handsofretail.hor.enums.UserRole;
-import com.handsofretail.hor.exception.DuplicateResourceException;
 import com.handsofretail.hor.exception.ResourceNotFoundException;
 import com.handsofretail.hor.mapper.ClientUserMapper;
 import com.handsofretail.hor.repository.ClientUserRepository;
 import com.handsofretail.hor.service.ClientUserService;
+import com.handsofretail.hor.service.validation.UserEmailValidationService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -27,15 +27,11 @@ public class ClientUserServiceImpl implements ClientUserService {
 
         private final PasswordEncoder passwordEncoder;
 
+        private final UserEmailValidationService userEmailValidationService;
+
         @Override
         public ClientUserResponse createClient(ClientUserRequest request) {
-
-                boolean emailExists = clientUserRepository
-                                .existsByEmail(request.getEmail());
-
-                if (emailExists) {
-                        throw new DuplicateResourceException("Email already exists");
-                }
+                userEmailValidationService.validateUniqueEmail(request.getEmail());
 
                 ClientUser clientUser = ClientUser.builder()
                                 .fullName(request.getFullName())
@@ -71,10 +67,7 @@ public class ClientUserServiceImpl implements ClientUserService {
 
                 // If email provided and different, check uniqueness
                 if (request.getEmail() != null && !request.getEmail().equals(client.getEmail())) {
-                        boolean emailExists = clientUserRepository.existsByEmail(request.getEmail());
-                        if (emailExists) {
-                                throw new DuplicateResourceException("Email already exists");
-                        }
+                        userEmailValidationService.validateUniqueEmail(request.getEmail());
                         client.setEmail(request.getEmail());
                 }
 

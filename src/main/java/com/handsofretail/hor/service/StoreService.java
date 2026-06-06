@@ -27,7 +27,7 @@ public interface StoreService {
 
     List<StoreMemberResponse> getStoreMembers(Long storeId);
 
-    StoreMemberResponse addStoreMember(Long storeId, StoreMemberRequest request);
+    StoreMemberResponse addStoreMember(StoreMemberRequest request);
 
     void removeStoreMember(Long storeId, Long clientId);
 }

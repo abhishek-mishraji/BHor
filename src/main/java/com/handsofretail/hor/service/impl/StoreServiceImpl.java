@@ -214,6 +214,7 @@ public class StoreServiceImpl implements StoreService {
         return clientStoreMappingRepository.findAllMembersWithClientByStoreId(storeId)
                 .stream()
                 .map(m -> StoreMemberResponse.builder()
+                        .storeId(storeId)
                         .clientId(m.getClient().getClientId())
                         .clientName(m.getClient().getFullName())
                         .role(m.getRole().name())
@@ -223,8 +224,10 @@ public class StoreServiceImpl implements StoreService {
 
     @Override
     @Transactional
-    public StoreMemberResponse addStoreMember(Long storeId, StoreMemberRequest request) {
-        storeRepository.findById(storeId)
+    public StoreMemberResponse addStoreMember(StoreMemberRequest request) {
+        Long storeId = request.getStoreId();
+
+        Store store = storeRepository.findById(storeId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Store not found with id: " + storeId));
 
@@ -234,16 +237,13 @@ public class StoreServiceImpl implements StoreService {
 
         if (clientStoreMappingRepository.existsByIdClientIdAndIdStoreId(
                 request.getClientId(), storeId)) {
-            throw new DuplicateResourceException(
-                    "Client " + request.getClientId() + " is already a member of store " + storeId);
+            throw new DuplicateResourceException("Client is already assigned to this store");
         }
 
-        if (request.getRole() == StoreRole.OWNER) {
-            throw new BadRequestException(
-                    "Cannot add a second OWNER. Use the update store endpoint to reassign ownership.");
+        if (request.getRole() == StoreRole.OWNER
+                && clientStoreMappingRepository.findByIdStoreIdAndRole(storeId, StoreRole.OWNER).isPresent()) {
+            throw new BadRequestException("Store already has an owner");
         }
-
-        Store store = storeRepository.getReferenceById(storeId);
 
         ClientStoreMapping mapping = ClientStoreMapping.builder()
                 .id(new ClientStoreId(client.getClientId(), storeId))
@@ -255,6 +255,7 @@ public class StoreServiceImpl implements StoreService {
         clientStoreMappingRepository.save(mapping);
 
         return StoreMemberResponse.builder()
+                .storeId(storeId)
                 .clientId(client.getClientId())
                 .clientName(client.getFullName())
                 .role(mapping.getRole().name())

@@ -5,6 +5,8 @@ import com.handsofretail.hor.dto.request.ClientUserUpdateRequest;
 import com.handsofretail.hor.dto.response.ApiResponse;
 import com.handsofretail.hor.dto.response.ClientUserResponse;
 import com.handsofretail.hor.service.ClientUserService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
@@ -22,6 +24,14 @@ public class ClientUserController {
     private final ClientUserService clientUserService;
 
     @PostMapping
+    @Operation(
+            summary = "Create client user",
+            description = "Creates a client user account. Email must be globally unique across admin_users and client_users.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "201", description = "Client created"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Validation failed"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "Email already exists")
+    })
     public ResponseEntity<ApiResponse<ClientUserResponse>> createClient(
             @Valid @RequestBody ClientUserRequest request) {
 

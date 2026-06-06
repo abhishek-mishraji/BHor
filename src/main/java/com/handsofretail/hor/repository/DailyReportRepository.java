@@ -11,6 +11,4 @@ public interface DailyReportRepository
                 extends JpaRepository<DailyReport, Long>, JpaSpecificationExecutor<DailyReport> {
 
         List<DailyReport> findByStoreStoreId(Long storeId);
-
-        List<DailyReport> findByStoreClientClientId(Long clientId);
 }
