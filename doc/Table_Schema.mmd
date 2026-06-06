@@ -1,11 +1,13 @@
 %%{init: {"theme": "forest", "themeVariables": {"primaryColor": "#f2f2f2", "primaryBorderColor": "#e61010", "primaryTextColor": "#01060d", "lineColor": "#0856f3", "fontFamily": "Arial"}}}%%
 erDiagram
-	CLIENT_USERS ||--o{ STORES : client_id
+    ADMIN_USERS ||--o{ REFRESH_TOKENS : user_email
+	CLIENT_USERS ||--o{ REFRESH_TOKENS : user_email
+	CLIENT_USERS ||--o{ CLIENT_STORE_MAPPING : client_id
+	STORES ||--o{ CLIENT_STORE_MAPPING : store_id
 	STORES ||--o{ DAILY_REPORTS : store_id
 	STORES ||--o{ MONTHLY_REPORTS : store_id
 	STORES ||--o{ YEARLY_REPORTS : store_id
-	ADMIN_USERS ||--o{ REFRESH_TOKENS : user_email
-	CLIENT_USERS ||--o{ REFRESH_TOKENS : user_email
+	
 
 	ADMIN_USERS {
 		Long admin_id PK
@@ -42,12 +44,19 @@ erDiagram
 
 	STORES {
 		Long store_id PK
-		Long client_id FK
 		String store_name
 		String store_code
 		String address
 		String contact_number
 		Status status
+		LocalDateTime created_at
+		LocalDateTime updated_at
+	}
+
+	CLIENT_STORE_MAPPING {
+		Long client_id PK,FK
+		Long store_id PK,FK
+		StoreRole role "OWNER or PARTNER"
 		LocalDateTime created_at
 		LocalDateTime updated_at
 	}
@@ -61,6 +70,10 @@ erDiagram
 		BigDecimal cash_deposit
 		BigDecimal check_deposit
 		BigDecimal over_short
+		BigDecimal no_sale
+		BigDecimal line_void
+		BigDecimal void_amount
+		BigDecimal refunds
 		LocalDateTime created_at
 		LocalDateTime updated_at
 	}

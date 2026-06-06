@@ -1,7 +1,7 @@
 # Software Requirements Specification — Hands Of Retail Backend API
 
-**Version:** 1.1  
-**Date:** 2026-06-04  
+**Version:** 2.0  
+**Date:** 2026-06-06  
 **Base URL:** `http://localhost:8080`  
 **Content-Type:** `application/json` (unless noted otherwise)  
 **Auth Scheme:** HttpOnly Cookies (`access_token` + `refresh_token`)
@@ -20,15 +20,17 @@
    - [7.1 Auth APIs](#71-auth-apis)
    - [7.2 Admin — Client Management](#72-admin--client-management)
    - [7.3 Admin — Store Management](#73-admin--store-management)
-   - [7.4 Admin — Daily Reports](#74-admin--daily-reports)
-   - [7.5 Admin — Monthly Reports](#75-admin--monthly-reports)
-   - [7.6 Admin — Yearly Reports](#76-admin--yearly-reports)
-   - [7.7 Client — Store Access](#77-client--store-access)
-   - [7.8 Client — Daily Reports](#78-client--daily-reports)
-   - [7.9 Client — Monthly Reports](#79-client--monthly-reports)
-   - [7.10 Client — Yearly Reports](#710-client--yearly-reports)
+   - [7.4 Admin — Store Member Management](#74-admin--store-member-management)
+   - [7.5 Admin — Daily Reports](#75-admin--daily-reports)
+   - [7.6 Admin — Monthly Reports](#76-admin--monthly-reports)
+   - [7.7 Admin — Yearly Reports](#77-admin--yearly-reports)
+   - [7.8 Client — Store Access](#78-client--store-access)
+   - [7.9 Client — Daily Reports](#79-client--daily-reports)
+   - [7.10 Client — Monthly Reports](#710-client--monthly-reports)
+   - [7.11 Client — Yearly Reports](#711-client--yearly-reports)
 8. [Non-Functional Requirements](#8-non-functional-requirements)
 9. [Business Rules](#9-business-rules)
+10. [Appendix A — Endpoint Quick Reference](#appendix-a--endpoint-quick-reference)
 
 ---
 
@@ -39,27 +41,27 @@
 **Hands Of Retail** is a Spring Boot 3.4.x REST API that manages retail **clients**, **stores**, and **sales reports** (daily, monthly, yearly). It provides cookie-based JWT-authenticated APIs for two roles:
 
 - **ADMIN** — full CRUD over all resources
-- **CLIENT** — read-only access to their own stores and reports
+- **CLIENT** — read-only access to stores and reports they are associated with (as OWNER or PARTNER)
 
 ### 1.2 Technology Stack
 
-| Layer            | Technology                             |
-|------------------|----------------------------------------|
-| Runtime          | Java 21                                |
-| Framework        | Spring Boot 3.4.x                      |
-| Security         | Spring Security + JWT (HttpOnly Cookies) |
-| Persistence      | Spring Data JPA                        |
-| Default Database | H2 (file-based, `./database/h2/retail-db`) |
-| Alt Database     | PostgreSQL (via config)                |
-| Schema Migrations| Flyway                                 |
-| API Docs         | Swagger / OpenAPI (auto-generated)     |
+| Layer            | Technology                                                   |
+|------------------|--------------------------------------------------------------|
+| Runtime          | Java 21                                                      |
+| Framework        | Spring Boot 3.4.x                                            |
+| Security         | Spring Security + JWT (HttpOnly Cookies)                     |
+| Persistence      | Spring Data JPA + Hibernate                                  |
+| Default Database | H2 (file-based, `./database/h2/retail-db`)                   |
+| Alt Database     | PostgreSQL (via config)                                      |
+| Schema Migrations| Flyway                                                       |
+| API Docs         | Swagger / OpenAPI (auto-generated at `/swagger-ui/index.html`)|
 
 ### 1.3 Scope
 
 The backend covers:
-- Authentication (login / access+refresh token issuance via HttpOnly cookies / token rotation / logout)
+- Authentication (login / token issuance via HttpOnly cookies / token rotation / logout)
 - Client management (CRUD)
-- Store management (CRUD + status toggle)
+- Store management (CRUD + status toggle + M:M member management)
 - Daily reporting (CRUD + filtering)
 - Monthly reporting (CRUD + bulk Excel upload + filtering)
 - Yearly reporting (CRUD + filtering)
@@ -80,12 +82,13 @@ Spring Security Filter Chain
       ▼
 REST Controllers  (/api/v1/...)
       │
-Service Layer (business logic + ownership checks)
+Service Layer (business logic + ownership checks via CLIENT_STORE_MAPPING)
       │
-Repository Layer (Spring Data JPA)
+Repository Layer (Spring Data JPA + Specifications)
       │
 H2 / PostgreSQL Database
       │  refresh_tokens table (SHA-256 hashed, revocable)
+      │  client_store_mapping table (M:M store ownership)
 ```
 
 ### Route Security Matrix
@@ -106,26 +109,30 @@ H2 / PostgreSQL Database
 
 ### Token Strategy
 
-The API uses a **dual-token HttpOnly cookie** scheme. No `Authorization` header is required — the browser / client attaches cookies automatically.
+The API uses a **dual-token HttpOnly cookie** scheme. No `Authorization` header is required — the browser/client attaches cookies automatically.
 
-| Cookie | Type | Lifetime | Path | Flags |
-|---|---|---|---|---|
-| `access_token` | JWT (signed HS256) | **15 minutes** | `/` | `HttpOnly; SameSite=Strict` |
-| `refresh_token` | Opaque random string | **7 days** | `/api/v1/auth` | `HttpOnly; SameSite=Strict` |
+| Cookie          | Type                  | Lifetime       | Path           | Flags                    |
+|-----------------|-----------------------|----------------|----------------|--------------------------|
+| `access_token`  | JWT (signed HS256)    | **15 minutes** | `/`            | `HttpOnly; SameSite=Strict` |
+| `refresh_token` | Opaque random string  | **7 days**     | `/api/v1/auth` | `HttpOnly; SameSite=Strict` |
 
 - The **access token** is a short-lived JWT encoding the user's `email` and `role`. It is validated by `JwtAuthenticationFilter` on every request.
-- The **refresh token** is stored as a SHA-256 hash in the `refresh_tokens` database table. It is used **only** to issue a new access token via `POST /api/v1/auth/refresh`.
-- **Refresh Token Rotation** — every call to `/refresh` revokes the old refresh token and issues a brand-new one.
-- On `logout`, both tokens are revoked and both cookies are cleared (MaxAge=0).
+- The **refresh token** is stored as a SHA-256 hash in the `refresh_tokens` database table and is used **only** to issue a new access token via `POST /api/v1/auth/refresh`.
+- **Refresh Token Rotation** — every call to `/refresh` revokes the old refresh token and issues a new one.
+- On `logout`, both tokens are revoked and both cookies are cleared (`MaxAge=0`).
 
 > **JavaScript cannot read these cookies** because they are `HttpOnly`. This protects against XSS token theft.
 
 ### Secure Flag
 
-| Environment | `Secure` flag |
-|---|---|
-| Local dev (HTTP) | `false` |
-| Production (HTTPS) | `true` — set via `JWT_REFRESH_COOKIE_SECURE=true` |
+| Environment         | `Secure` flag                                      |
+|---------------------|----------------------------------------------------|
+| Local dev (HTTP)    | `false`                                            |
+| Production (HTTPS)  | `true` — set via `JWT_REFRESH_COOKIE_SECURE=true`  |
+
+### Client Authorization
+
+CLIENT-role users are authorized to access a store's resources only if a row exists in `CLIENT_STORE_MAPPING` for their `(client_id, store_id)` pair. Both `OWNER` and `PARTNER` roles grant read access to store reports. Ownership role does **not** grant any additional API permissions — the distinction is informational only (visible in `clientRole` field).
 
 ---
 
@@ -135,21 +142,23 @@ Every API response (success **and** error) is wrapped in the following JSON enve
 
 ```json
 {
-  "success": true | false,
+  "success": true,
   "message": "Human-readable status message",
-  "data": { ... } | [ ... ] | null,
-  "errors": { "fieldName": "error message" } | null,
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "data": { ... },
+  "errors": { "fieldName": "error message" },
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-| Field       | Type              | Always Present | Description                                      |
-|-------------|-------------------|----------------|--------------------------------------------------|
-| `success`   | `boolean`         | ✅              | `true` on success, `false` on error              |
-| `message`   | `string`          | ✅              | Human-readable outcome description               |
-| `data`      | `object` / `array`| ❌ (omitted if null) | Payload on success; null/omitted on error   |
-| `errors`    | `object`          | ❌ (omitted if null) | Field-level validation errors map            |
-| `timestamp` | `ISO-8601 string` | ✅              | Server time when response was generated          |
+| Field       | Type               | Always Present      | Description                                         |
+|-------------|--------------------|---------------------|-----------------------------------------------------|
+| `success`   | `boolean`          | ✅                   | `true` on success, `false` on error                 |
+| `message`   | `string`           | ✅                   | Human-readable outcome description                  |
+| `data`      | `object` / `array` | ❌ (omitted if null) | Payload on success; omitted on error                |
+| `errors`    | `object`           | ❌ (omitted if null) | Field-level validation error map                    |
+| `timestamp` | `ISO-8601 string`  | ✅                   | Server UTC time when response was generated         |
+
+> All `null` fields are omitted from the JSON response via `@JsonInclude(NON_NULL)`.
 
 ---
 
@@ -159,17 +168,17 @@ All error responses follow the common envelope with `"success": false`.
 
 ### 5.1 HTTP Status Codes
 
-| HTTP Status | When Triggered                                              | Exception Class               |
-|-------------|-------------------------------------------------------------|-------------------------------|
-| `400`       | Validation failure on request body fields                   | `MethodArgumentNotValidException` |
-| `400`       | General bad request (business logic rejection)              | `BadRequestException`         |
-| `401`       | Missing or invalid JWT token                                | `UnauthorizedException`       |
-| `403`       | Valid token but insufficient role/ownership                 | `ForbiddenException`          |
-| `404`       | Referenced resource does not exist                          | `ResourceNotFoundException`   |
-| `409`       | Duplicate resource (e.g., email or store code already used) | `DuplicateResourceException`  |
-| `500`       | Unexpected internal server error                            | `Exception` (fallback)        |
+| HTTP Status | When Triggered                                               | Exception Class                   |
+|-------------|--------------------------------------------------------------|-----------------------------------|
+| `400`       | Validation failure on request body fields                    | `MethodArgumentNotValidException` |
+| `400`       | General bad request (business logic rejection)               | `BadRequestException`             |
+| `401`       | Missing or invalid JWT token                                 | `UnauthorizedException`           |
+| `403`       | Valid token but insufficient role or ownership               | `ForbiddenException`              |
+| `404`       | Referenced resource does not exist                           | `ResourceNotFoundException`       |
+| `409`       | Duplicate resource (e.g., email or store code already used)  | `DuplicateResourceException`      |
+| `500`       | Unexpected internal server error                             | `Exception` (fallback)            |
 
-### 5.2 Error Response Bodies
+### 5.2 Standard Error Response Examples
 
 **400 — Validation Error (field-level)**
 ```json
@@ -180,7 +189,7 @@ All error responses follow the common envelope with `"success": false`.
     "email": "must be a well-formed email address",
     "password": "must not be blank"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -188,8 +197,8 @@ All error responses follow the common envelope with `"success": false`.
 ```json
 {
   "success": false,
-  "message": "Store not found for the given client",
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "message": "Cannot remove the store owner",
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -198,7 +207,7 @@ All error responses follow the common envelope with `"success": false`.
 {
   "success": false,
   "message": "Authentication required",
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -207,7 +216,7 @@ All error responses follow the common envelope with `"success": false`.
 {
   "success": false,
   "message": "Access denied",
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -215,8 +224,8 @@ All error responses follow the common envelope with `"success": false`.
 ```json
 {
   "success": false,
-  "message": "Client not found with id: 99",
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "message": "Store not found with id: 99",
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -225,7 +234,7 @@ All error responses follow the common envelope with `"success": false`.
 {
   "success": false,
   "message": "Email already in use: john@gmail.com",
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -234,7 +243,7 @@ All error responses follow the common envelope with `"success": false`.
 {
   "success": false,
   "message": "Unexpected error",
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
@@ -243,9 +252,10 @@ All error responses follow the common envelope with `"success": false`.
 ## 6. Database Schema
 
 ```mermaid
-%%{init: {"theme": "forest"}}%%
+%%{init: {"theme": "forest", "themeVariables": {"primaryColor": "#f2f2f2", "primaryBorderColor": "#e61010", "primaryTextColor": "#01060d", "lineColor": "#0856f3", "fontFamily": "Arial"}}}%%
 erDiagram
-    CLIENT_USERS ||--o{ STORES : client_id
+    CLIENT_USERS ||--o{ CLIENT_STORE_MAPPING : client_id
+    STORES ||--o{ CLIENT_STORE_MAPPING : store_id
     STORES ||--o{ DAILY_REPORTS : store_id
     STORES ||--o{ MONTHLY_REPORTS : store_id
     STORES ||--o{ YEARLY_REPORTS : store_id
@@ -277,7 +287,7 @@ erDiagram
 
     REFRESH_TOKENS {
         Long id PK
-        String token_hash "SHA-256 of raw token"
+        String token_hash "SHA-256 hash of raw token"
         String user_email
         String user_role
         LocalDateTime expires_at
@@ -287,12 +297,19 @@ erDiagram
 
     STORES {
         Long store_id PK
-        Long client_id FK
         String store_name
         String store_code
         String address
         String contact_number
         Status status
+        LocalDateTime created_at
+        LocalDateTime updated_at
+    }
+
+    CLIENT_STORE_MAPPING {
+        Long client_id PK,FK
+        Long store_id PK,FK
+        StoreRole role "OWNER or PARTNER"
         LocalDateTime created_at
         LocalDateTime updated_at
     }
@@ -306,6 +323,10 @@ erDiagram
         BigDecimal cash_deposit
         BigDecimal check_deposit
         BigDecimal over_short
+        BigDecimal no_sale
+        BigDecimal line_void
+        BigDecimal void_amount
+        BigDecimal refunds
         LocalDateTime created_at
         LocalDateTime updated_at
     }
@@ -339,10 +360,22 @@ erDiagram
 
 ### Enumerations
 
-| Enum       | Values              |
-|------------|---------------------|
-| `UserRole` | `ADMIN`, `CLIENT`   |
-| `Status`   | `ACTIVE`, `INACTIVE`|
+| Enum        | Values                |
+|-------------|-----------------------|
+| `UserRole`  | `ADMIN`, `CLIENT`     |
+| `Status`    | `ACTIVE`, `INACTIVE`  |
+| `StoreRole` | `OWNER`, `PARTNER`    |
+
+### Store Ownership Model
+
+Stores and clients have a **many-to-many** relationship managed through `CLIENT_STORE_MAPPING`:
+
+- Every store has **exactly one OWNER** (enforced by a partial unique index on `store_id WHERE role = 'OWNER'`).
+- A store can have **zero or more PARTNER** clients.
+- A client can be the OWNER of multiple stores.
+- A client can be a PARTNER in multiple stores.
+- A client can simultaneously be the OWNER of one store and a PARTNER in another.
+- Store responses (`clientId`, `clientName`) represent the **OWNER** in admin contexts.
 
 ---
 
@@ -356,16 +389,22 @@ erDiagram
 
 #### `POST /api/v1/auth/login`
 
-**Purpose:** Authenticate a user (admin or client). Issues both tokens as HttpOnly cookies — no token in the response body.  
+**Purpose:** Authenticate a user (admin or client). Issues both tokens as HttpOnly cookies — no raw token is returned in the response body.  
 **Auth Required:** ❌ None  
 **HTTP Status (success):** `200 OK`
 
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
 ##### Request Body
 
-| Field      | Type     | Required | Validation              |
-|------------|----------|----------|-------------------------|
-| `email`    | `string` | ✅        | Must be a valid email   |
-| `password` | `string` | ✅        | Must not be blank       |
+| Field      | Type     | Required | Validation                    |
+|------------|----------|----------|-------------------------------|
+| `email`    | `string` | ✅        | Must be a valid email format  |
+| `password` | `string` | ✅        | Must not be blank             |
 
 ```json
 {
@@ -376,6 +415,13 @@ erDiagram
 
 ##### Success Response — `200 OK`
 
+Two HttpOnly cookies are set via `Set-Cookie` response headers.
+
+| Cookie          | Content              | Path           | MaxAge    | Flags                    |
+|-----------------|----------------------|----------------|-----------|--------------------------|
+| `access_token`  | Signed JWT           | `/`            | 900 s     | `HttpOnly; SameSite=Strict` |
+| `refresh_token` | Opaque random string | `/api/v1/auth` | 604800 s  | `HttpOnly; SameSite=Strict` |
+
 ```json
 {
   "success": true,
@@ -385,68 +431,40 @@ erDiagram
     "email": "admin@gmail.com",
     "fullName": "Admin User"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response Cookies (Set-Cookie headers)
+##### Response `data` Fields
 
-| Cookie | Content | Path | MaxAge | Flags |
-|---|---|---|---|---|
-| `access_token` | Signed JWT | `/` | 900 s (15 min) | `HttpOnly` |
-| `refresh_token` | Opaque random string | `/api/v1/auth` | 604800 s (7 days) | `HttpOnly` |
-
-##### Response — `data` Object Fields
-
-| Field      | Type     | Description                         |
-|------------|----------|-------------------------------------|
-| `role`     | `string` | `ADMIN` or `CLIENT`                 |
-| `email`    | `string` | Authenticated user's email          |
-| `fullName` | `string` | Authenticated user's full name      |
+| Field      | Type     | Description                      |
+|------------|----------|----------------------------------|
+| `role`     | `string` | `ADMIN` or `CLIENT`              |
+| `email`    | `string` | Authenticated user's email       |
+| `fullName` | `string` | Authenticated user's full name   |
 
 ##### Error Responses
 
-| Status | Scenario                         | Example `message`              |
-|--------|----------------------------------|--------------------------------|
-| `400`  | Blank or invalid email format    | `"Validation failed"`          |
-| `400`  | Blank password                   | `"Validation failed"`          |
-| `401`  | Wrong credentials                | `"Invalid email or password"`  |
-
-**Validation Error Example (400):**
-```json
-{
-  "success": false,
-  "message": "Validation failed",
-  "errors": {
-    "email": "must be a well-formed email address",
-    "password": "must not be blank"
-  },
-  "timestamp": "2026-06-03T18:20:00.000Z"
-}
-```
-
-**Unauthorized Error Example (401):**
-```json
-{
-  "success": false,
-  "message": "Invalid email or password",
-  "timestamp": "2026-06-03T18:20:00.000Z"
-}
-```
+| Status | Scenario                           | `message`                              |
+|--------|------------------------------------|----------------------------------------|
+| `400`  | Blank or invalid email/password    | `"Validation failed"` + `errors` map  |
+| `401`  | Wrong credentials                  | `"Invalid email or password"`          |
 
 ---
 
 #### `POST /api/v1/auth/refresh`
 
-**Purpose:** Exchange a valid `refresh_token` cookie for a new `access_token` cookie. Implements **refresh token rotation** — the old refresh token is revoked and a new one is issued.  
+**Purpose:** Exchange a valid `refresh_token` cookie for a new `access_token` cookie. Implements **refresh token rotation** — the old token is revoked and a new pair is issued.  
 **Auth Required:** ❌ None (authenticated via `refresh_token` cookie)  
 **HTTP Status (success):** `200 OK`
 
 ##### Request
 
-No request body. The `refresh_token` cookie is sent automatically by the browser.
+No request body. The `refresh_token` cookie is attached automatically by the browser.
 
 ##### Success Response — `200 OK`
+
+A fresh `access_token` (15 min) and rotated `refresh_token` (7 days) are set in response cookies.
 
 ```json
 {
@@ -454,22 +472,21 @@ No request body. The `refresh_token` cookie is sent automatically by the browser
   "message": "Token refreshed",
   "data": {
     "role": "ADMIN",
-    "email": "admin@gmail.com"
+    "email": "admin@gmail.com",
+    "fullName": "Admin User"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-A fresh `access_token` cookie (15 min) and rotated `refresh_token` cookie (7 days) are set in the response headers.
-
 ##### Error Responses
 
-| Status | Scenario                                      | Example `message`                     |
-|--------|-----------------------------------------------|---------------------------------------|
-| `401`  | `refresh_token` cookie missing                | `"Refresh token cookie is missing"`   |
-| `401`  | Token not found in DB / already rotated       | `"Invalid refresh token"`             |
-| `401`  | Token revoked                                 | `"Refresh token has been revoked"`    |
-| `401`  | Token expired (> 7 days)                      | `"Refresh token has expired"`         |
+| Status | Scenario                                | `message`                           |
+|--------|-----------------------------------------|-------------------------------------|
+| `401`  | `refresh_token` cookie missing          | `"Refresh token cookie is missing"` |
+| `401`  | Token not found in DB / already rotated | `"Invalid refresh token"`           |
+| `401`  | Token revoked                           | `"Refresh token has been revoked"`  |
+| `401`  | Token expired (> 7 days)               | `"Refresh token has expired"`       |
 
 ---
 
@@ -481,33 +498,32 @@ A fresh `access_token` cookie (15 min) and rotated `refresh_token` cookie (7 day
 
 ##### Request
 
-No request body. The `refresh_token` cookie is sent automatically by the browser.
+No request body. The `refresh_token` cookie is attached automatically by the browser.
 
 ##### Success Response — `200 OK`
+
+Both `access_token` and `refresh_token` cookies are cleared (`MaxAge=0`).
 
 ```json
 {
   "success": true,
   "message": "Logged out successfully",
-  "data": null,
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-Both `access_token` and `refresh_token` cookies are cleared (`MaxAge=0`).
-
 ##### Error Responses
 
-| Status | Scenario                          | Example `message`                   |
-|--------|-----------------------------------|-------------------------------------|
-| `401`  | `refresh_token` cookie missing    | `"Refresh token cookie is missing"` |
-| `401`  | Token invalid / already revoked   | `"Invalid refresh token"`           |
+| Status | Scenario                         | `message`                           |
+|--------|----------------------------------|-------------------------------------|
+| `401`  | `refresh_token` cookie missing   | `"Refresh token cookie is missing"` |
+| `401`  | Token invalid / already revoked  | `"Invalid refresh token"`           |
 
 ---
 
 ### 7.2 Admin — Client Management
 
-> All endpoints under `/api/v1/admin/**` require a valid `access_token` cookie with role `ADMIN`. The cookie is attached automatically by the browser on every request.
+> All endpoints under `/api/v1/admin/**` require a valid `access_token` cookie with role `ADMIN`.
 
 ---
 
@@ -517,15 +533,21 @@ Both `access_token` and `refresh_token` cookies are cleared (`MaxAge=0`).
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `201 Created`
 
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
 ##### Request Body
 
-| Field         | Type     | Required | Validation             |
-|---------------|----------|----------|------------------------|
-| `fullName`    | `string` | ✅        | Must not be blank      |
-| `email`       | `string` | ✅        | Must be a valid email; must be unique |
-| `password`    | `string` | ✅        | Must not be blank      |
-| `phoneNumber` | `string` | ❌        | Optional               |
-| `address`     | `string` | ❌        | Optional               |
+| Field         | Type     | Required | Validation                                  |
+|---------------|----------|----------|---------------------------------------------|
+| `fullName`    | `string` | ✅        | Must not be blank                           |
+| `email`       | `string` | ✅        | Must be a valid email; must be unique       |
+| `password`    | `string` | ✅        | Must not be blank                           |
+| `phoneNumber` | `string` | ❌        | Optional                                    |
+| `address`     | `string` | ❌        | Optional                                    |
 
 ```json
 {
@@ -552,52 +574,30 @@ Both `access_token` and `refresh_token` cookies are cleared (`MaxAge=0`).
     "status": "ACTIVE",
     "role": "CLIENT"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response — `data` Object Fields
+##### Response `data` Fields
 
-| Field         | Type     | Description                        |
-|---------------|----------|------------------------------------|
-| `clientId`    | `Long`   | Auto-generated primary key         |
-| `fullName`    | `string` | Client's full name                 |
-| `email`       | `string` | Client's email address             |
-| `phoneNumber` | `string` | Client's phone number (nullable)   |
-| `address`     | `string` | Client's address (nullable)        |
-| `status`      | `string` | `ACTIVE` (default on creation)     |
-| `role`        | `string` | Always `CLIENT`                    |
+| Field         | Type     | Description                          |
+|---------------|----------|--------------------------------------|
+| `clientId`    | `Long`   | Auto-generated primary key           |
+| `fullName`    | `string` | Client's full name                   |
+| `email`       | `string` | Client's email address               |
+| `phoneNumber` | `string` | Client's phone number (nullable)     |
+| `address`     | `string` | Client's address (nullable)          |
+| `status`      | `string` | `ACTIVE` (default on creation)       |
+| `role`        | `string` | Always `CLIENT`                      |
 
 ##### Error Responses
 
-| Status | Scenario                         | Example `message`                        |
-|--------|----------------------------------|------------------------------------------|
-| `400`  | Blank `fullName`, invalid email, blank `password` | `"Validation failed"` |
-| `401`  | Missing or invalid JWT           | `"Authentication required"`              |
-| `403`  | Authenticated but not ADMIN      | `"Access denied"`                        |
-| `409`  | Email already in use             | `"Email already in use: john@gmail.com"` |
-
-**Validation Error (400):**
-```json
-{
-  "success": false,
-  "message": "Validation failed",
-  "errors": {
-    "fullName": "must not be blank",
-    "email": "must be a well-formed email address"
-  },
-  "timestamp": "2026-06-03T18:20:00.000Z"
-}
-```
-
-**Conflict Error (409):**
-```json
-{
-  "success": false,
-  "message": "Email already in use: john@gmail.com",
-  "timestamp": "2026-06-03T18:20:00.000Z"
-}
-```
+| Status | Scenario                                          | `message`                                 |
+|--------|---------------------------------------------------|-------------------------------------------|
+| `400`  | Blank `fullName`, invalid email, blank `password` | `"Validation failed"` + `errors` map     |
+| `401`  | Missing or invalid JWT                            | `"Authentication required"`               |
+| `403`  | Authenticated but not ADMIN                       | `"Access denied"`                         |
+| `409`  | Email already in use                              | `"Email already in use: john@gmail.com"`  |
 
 ---
 
@@ -637,42 +637,46 @@ None.
       "role": "CLIENT"
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                    | Example `message`          |
-|--------|-----------------------------|----------------------------|
-| `401`  | Missing / invalid JWT       | `"Authentication required"` |
-| `403`  | Not an ADMIN                | `"Access denied"`           |
+| Status | Scenario              | `message`                   |
+|--------|-----------------------|-----------------------------|
+| `401`  | Missing / invalid JWT | `"Authentication required"` |
+| `403`  | Not an ADMIN          | `"Access denied"`           |
 
 ---
 
 #### `PUT /api/v1/admin/clients/{id}`
 
-**Purpose:** Update an existing client's details.  
+**Purpose:** Update an existing client's details. All fields are optional (partial update).  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name | Type   | Description             |
-|------|--------|-------------------------|
-| `id` | `Long` | Client's primary key ID |
+| Name | Type   | Required | Description             |
+|------|--------|----------|-------------------------|
+| `id` | `Long` | ✅        | Client's primary key ID |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
 
 ##### Request Body
 
-All fields are **optional** (partial update). Only provided fields are applied.
-
-| Field         | Type     | Required | Validation              |
-|---------------|----------|----------|-------------------------|
-| `fullName`    | `string` | ❌        | Optional                |
-| `email`       | `string` | ❌        | Must be valid email if provided; must be unique |
-| `password`    | `string` | ❌        | If provided, will be hashed and stored |
-| `phoneNumber` | `string` | ❌        | Optional                |
-| `address`     | `string` | ❌        | Optional                |
+| Field         | Type     | Required | Validation                                      |
+|---------------|----------|----------|-------------------------------------------------|
+| `fullName`    | `string` | ❌        | Optional                                        |
+| `email`       | `string` | ❌        | Must be valid email format if provided; unique  |
+| `password`    | `string` | ❌        | If provided, hashed and stored                  |
+| `phoneNumber` | `string` | ❌        | Optional                                        |
+| `address`     | `string` | ❌        | Optional                                        |
 
 ```json
 {
@@ -699,19 +703,19 @@ All fields are **optional** (partial update). Only provided fields are applied.
     "status": "ACTIVE",
     "role": "CLIENT"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                       | Example `message`                         |
-|--------|--------------------------------|-------------------------------------------|
-| `400`  | Invalid email format in body   | `"Validation failed"`                     |
-| `401`  | Missing / invalid JWT          | `"Authentication required"`               |
-| `403`  | Not an ADMIN                   | `"Access denied"`                         |
-| `404`  | Client ID does not exist       | `"Client not found with id: 99"`          |
-| `409`  | New email already in use       | `"Email already in use: other@gmail.com"` |
+| Status | Scenario                     | `message`                                  |
+|--------|------------------------------|--------------------------------------------|
+| `400`  | Invalid email format in body | `"Validation failed"` + `errors` map      |
+| `401`  | Missing / invalid JWT        | `"Authentication required"`                |
+| `403`  | Not an ADMIN                 | `"Access denied"`                          |
+| `404`  | Client ID does not exist     | `"Client not found with id: 99"`           |
+| `409`  | New email already in use     | `"Email already in use: other@gmail.com"`  |
 
 ---
 
@@ -721,19 +725,25 @@ All fields are **optional** (partial update). Only provided fields are applied.
 
 #### `POST /api/v1/admin/stores`
 
-**Purpose:** Create a new store linked to an existing client.  
+**Purpose:** Create a new store and assign a client as its OWNER.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `201 Created`
 
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
 ##### Request Body
 
-| Field           | Type     | Required | Validation                        |
-|-----------------|----------|----------|-----------------------------------|
-| `clientId`      | `Long`   | ✅        | Must not be null; client must exist |
-| `storeName`     | `string` | ✅        | Must not be blank                 |
-| `storeCode`     | `string` | ✅        | Must not be blank; must be unique |
-| `address`       | `string` | ❌        | Optional                          |
-| `contactNumber` | `string` | ❌        | Optional                          |
+| Field           | Type     | Required | Validation                              |
+|-----------------|----------|----------|-----------------------------------------|
+| `clientId`      | `Long`   | ✅        | Must not be null; client must exist; becomes OWNER |
+| `storeName`     | `string` | ✅        | Must not be blank                       |
+| `storeCode`     | `string` | ✅        | Must not be blank; must be unique       |
+| `address`       | `string` | ❌        | Optional                                |
+| `contactNumber` | `string` | ❌        | Optional                                |
 
 ```json
 {
@@ -761,49 +771,51 @@ All fields are **optional** (partial update). Only provided fields are applied.
     "contactNumber": "9876543210",
     "status": "ACTIVE"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response — `data` Object Fields
+##### Response `data` Fields
 
-| Field           | Type     | Description                           |
-|-----------------|----------|---------------------------------------|
-| `storeId`       | `Long`   | Auto-generated store ID               |
-| `clientId`      | `Long`   | ID of the owning client               |
-| `clientName`    | `string` | Full name of the owning client        |
-| `storeName`     | `string` | Store name                            |
-| `storeCode`     | `string` | Unique store code                     |
-| `address`       | `string` | Store address (nullable)              |
-| `contactNumber` | `string` | Contact number (nullable)             |
-| `status`        | `string` | `ACTIVE` (default on creation)        |
+| Field           | Type     | Description                                        |
+|-----------------|----------|----------------------------------------------------|
+| `storeId`       | `Long`   | Auto-generated store ID                            |
+| `clientId`      | `Long`   | ID of the OWNER client                             |
+| `clientName`    | `string` | Full name of the OWNER client                      |
+| `storeName`     | `string` | Store name                                         |
+| `storeCode`     | `string` | Unique store code                                  |
+| `address`       | `string` | Store address (nullable)                           |
+| `contactNumber` | `string` | Contact number (nullable)                          |
+| `status`        | `string` | `ACTIVE` (default on creation)                     |
+
+> `clientRole` is **not** included in admin store responses.
 
 ##### Error Responses
 
-| Status | Scenario                            | Example `message`                        |
-|--------|-------------------------------------|------------------------------------------|
-| `400`  | Blank `storeName` or `storeCode`, null `clientId` | `"Validation failed"`     |
-| `401`  | Missing / invalid JWT               | `"Authentication required"`              |
-| `403`  | Not an ADMIN                        | `"Access denied"`                        |
-| `404`  | `clientId` not found                | `"Client not found with id: 99"`         |
-| `409`  | `storeCode` already exists          | `"Store code already in use: WM001"`     |
+| Status | Scenario                                           | `message`                             |
+|--------|----------------------------------------------------|---------------------------------------|
+| `400`  | Blank `storeName` or `storeCode`, null `clientId`  | `"Validation failed"` + `errors` map |
+| `401`  | Missing / invalid JWT                              | `"Authentication required"`           |
+| `403`  | Not an ADMIN                                       | `"Access denied"`                     |
+| `404`  | `clientId` not found                               | `"Client not found with id: 99"`      |
+| `409`  | `storeCode` already exists                         | `"Store code already in use: WM001"`  |
 
 ---
 
 #### `GET /api/v1/admin/stores`
 
-**Purpose:** Retrieve all stores, optionally filtered by client and/or status.  
+**Purpose:** Retrieve all stores, optionally filtered by client ID and/or status.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
 ##### Query Parameters
 
-| Param      | Type     | Required | Description                              |
-|------------|----------|----------|------------------------------------------|
-| `clientId` | `Long`   | ❌        | Filter stores by client ID               |
-| `status`   | `string` | ❌        | Filter by status: `ACTIVE` or `INACTIVE` |
+| Param      | Type     | Required | Description                                                  |
+|------------|----------|----------|--------------------------------------------------------------|
+| `clientId` | `Long`   | ❌        | Filter stores where this client is OWNER or PARTNER          |
+| `status`   | `string` | ❌        | Filter by status: `ACTIVE` or `INACTIVE`                     |
 
-**Example request:**
+**Example:**
 ```
 GET /api/v1/admin/stores?clientId=1&status=ACTIVE
 ```
@@ -826,13 +838,13 @@ GET /api/v1/admin/stores?clientId=1&status=ACTIVE
       "status": "ACTIVE"
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`           |
+| Status | Scenario              | `message`                   |
 |--------|-----------------------|-----------------------------|
 | `401`  | Missing / invalid JWT | `"Authentication required"` |
 | `403`  | Not an ADMIN          | `"Access denied"`           |
@@ -845,11 +857,11 @@ GET /api/v1/admin/stores?clientId=1&status=ACTIVE
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description     |
-|-----------|--------|-----------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -867,45 +879,51 @@ GET /api/v1/admin/stores?clientId=1&status=ACTIVE
     "contactNumber": "9876543210",
     "status": "ACTIVE"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`                    |
-|--------|-----------------------|--------------------------------------|
-| `401`  | Missing / invalid JWT | `"Authentication required"`          |
-| `403`  | Not an ADMIN          | `"Access denied"`                    |
-| `404`  | Store ID not found    | `"Store not found with id: 99"`      |
+| Status | Scenario              | `message`                        |
+|--------|-----------------------|----------------------------------|
+| `401`  | Missing / invalid JWT | `"Authentication required"`      |
+| `403`  | Not an ADMIN          | `"Access denied"`                |
+| `404`  | Store ID not found    | `"Store not found with id: 99"`  |
 
 ---
 
 #### `PUT /api/v1/admin/stores/{storeId}`
 
-**Purpose:** Update an existing store's details. All fields are optional (partial update).  
+**Purpose:** Update an existing store's details. All fields are optional (partial update). If `clientId` is provided, the OWNER mapping is reassigned to that client.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description     |
-|-----------|--------|-----------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
 
 ##### Request Body
 
-| Field           | Type     | Required | Validation                              |
-|-----------------|----------|----------|-----------------------------------------|
-| `clientId`      | `Long`   | ❌        | If provided, re-assigns store to client |
-| `storeName`     | `string` | ❌        | Optional                                |
-| `storeCode`     | `string` | ❌        | Must be unique if provided              |
-| `address`       | `string` | ❌        | Optional                                |
-| `contactNumber` | `string` | ❌        | Optional                                |
+| Field           | Type     | Required | Validation                                         |
+|-----------------|----------|----------|----------------------------------------------------|
+| `clientId`      | `Long`   | ❌        | If provided, reassigns OWNER to this client        |
+| `storeName`     | `string` | ❌        | Optional                                           |
+| `storeCode`     | `string` | ❌        | Must be unique if provided                         |
+| `address`       | `string` | ❌        | Optional                                           |
+| `contactNumber` | `string` | ❌        | Optional                                           |
 
 ```json
 {
-  "clientId": 1,
+  "clientId": 2,
   "storeName": "Walmart Uptown",
   "storeCode": "WM002",
   "address": "Nevada",
@@ -921,49 +939,49 @@ GET /api/v1/admin/stores?clientId=1&status=ACTIVE
   "message": "Store updated",
   "data": {
     "storeId": 1,
-    "clientId": 1,
-    "clientName": "John Doe",
+    "clientId": 2,
+    "clientName": "Jane Smith",
     "storeName": "Walmart Uptown",
     "storeCode": "WM002",
     "address": "Nevada",
     "contactNumber": "9111111111",
     "status": "ACTIVE"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                   | Example `message`                    |
-|--------|----------------------------|--------------------------------------|
-| `401`  | Missing / invalid JWT      | `"Authentication required"`          |
-| `403`  | Not an ADMIN               | `"Access denied"`                    |
-| `404`  | Store ID not found         | `"Store not found with id: 99"`      |
-| `404`  | Provided `clientId` not found | `"Client not found with id: 99"`  |
-| `409`  | New `storeCode` already in use | `"Store code already in use: WM002"` |
+| Status | Scenario                          | `message`                              |
+|--------|-----------------------------------|----------------------------------------|
+| `401`  | Missing / invalid JWT             | `"Authentication required"`            |
+| `403`  | Not an ADMIN                      | `"Access denied"`                      |
+| `404`  | Store ID not found                | `"Store not found with id: 99"`        |
+| `404`  | Provided `clientId` not found     | `"Client not found with id: 99"`       |
+| `409`  | New `storeCode` already in use    | `"Store code already in use: WM002"`   |
 
 ---
 
 #### `PATCH /api/v1/admin/stores/{storeId}/status`
 
-**Purpose:** Activate or deactivate a store independently of other fields.  
+**Purpose:** Activate or deactivate a store without changing other fields.  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
-##### Query Parameter
+##### Query Parameters
 
-| Param    | Type     | Required | Values                |
-|----------|----------|----------|-----------------------|
-| `status` | `string` | ✅        | `ACTIVE` or `INACTIVE` |
+| Param    | Type     | Required | Values                   |
+|----------|----------|----------|--------------------------|
+| `status` | `string` | ✅        | `ACTIVE` or `INACTIVE`   |
 
-**Example request:**
+**Example:**
 ```
 PATCH /api/v1/admin/stores/1/status?status=INACTIVE
 ```
@@ -984,22 +1002,178 @@ PATCH /api/v1/admin/stores/1/status?status=INACTIVE
     "contactNumber": "9876543210",
     "status": "INACTIVE"
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario               | Example `message`                    |
-|--------|------------------------|--------------------------------------|
-| `400`  | Invalid `status` value | `"Invalid status value"`             |
-| `401`  | Missing / invalid JWT  | `"Authentication required"`          |
-| `403`  | Not an ADMIN           | `"Access denied"`                    |
-| `404`  | Store ID not found     | `"Store not found with id: 99"`      |
+| Status | Scenario               | `message`                        |
+|--------|------------------------|----------------------------------|
+| `400`  | Invalid `status` value | `"Invalid status value"`         |
+| `401`  | Missing / invalid JWT  | `"Authentication required"`      |
+| `403`  | Not an ADMIN           | `"Access denied"`                |
+| `404`  | Store ID not found     | `"Store not found with id: 99"`  |
 
 ---
 
-### 7.4 Admin — Daily Reports
+### 7.4 Admin — Store Member Management
+
+These endpoints manage the `CLIENT_STORE_MAPPING` junction table. OWNER cannot be added or removed via these endpoints — use `POST /admin/stores` or `PUT /admin/stores/{storeId}` to set the OWNER.
+
+---
+
+#### `GET /api/v1/admin/stores/{storeId}/members`
+
+**Purpose:** List all clients (OWNER and PARTNERs) associated with a store.  
+**Auth Required:** ✅ ADMIN  
+**HTTP Status (success):** `200 OK`
+
+##### Path Parameters
+
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
+
+##### Success Response — `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Store members fetched",
+  "data": [
+    {
+      "clientId": 1,
+      "clientName": "John Doe",
+      "role": "OWNER"
+    },
+    {
+      "clientId": 3,
+      "clientName": "Alice Brown",
+      "role": "PARTNER"
+    }
+  ],
+  "timestamp": "2026-06-06T10:00:00.000Z"
+}
+```
+
+##### Response `data` Item Fields
+
+| Field        | Type     | Description                      |
+|--------------|----------|----------------------------------|
+| `clientId`   | `Long`   | Client's primary key             |
+| `clientName` | `string` | Client's full name               |
+| `role`       | `string` | `OWNER` or `PARTNER`             |
+
+##### Error Responses
+
+| Status | Scenario              | `message`                        |
+|--------|-----------------------|----------------------------------|
+| `401`  | Missing / invalid JWT | `"Authentication required"`      |
+| `403`  | Not an ADMIN          | `"Access denied"`                |
+| `404`  | Store ID not found    | `"Store not found with id: 99"`  |
+
+---
+
+#### `POST /api/v1/admin/stores/{storeId}/members`
+
+**Purpose:** Add a PARTNER client to a store.  
+**Auth Required:** ✅ ADMIN  
+**HTTP Status (success):** `201 Created`
+
+> Role `OWNER` is rejected by this endpoint. To change the OWNER use `PUT /api/v1/admin/stores/{storeId}`.
+
+##### Path Parameters
+
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
+##### Request Body
+
+| Field      | Type        | Required | Validation                                         |
+|------------|-------------|----------|----------------------------------------------------|
+| `clientId` | `Long`      | ✅        | Must not be null; client must exist                |
+| `role`     | `StoreRole` | ✅        | Must be `PARTNER` (submitting `OWNER` returns 400) |
+
+```json
+{
+  "clientId": 3,
+  "role": "PARTNER"
+}
+```
+
+##### Success Response — `201 Created`
+
+```json
+{
+  "success": true,
+  "message": "Store member added",
+  "data": {
+    "clientId": 3,
+    "clientName": "Alice Brown",
+    "role": "PARTNER"
+  },
+  "timestamp": "2026-06-06T10:00:00.000Z"
+}
+```
+
+##### Error Responses
+
+| Status | Scenario                                 | `message`                                       |
+|--------|------------------------------------------|-------------------------------------------------|
+| `400`  | Null `clientId` or `role`                | `"Validation failed"` + `errors` map           |
+| `400`  | `role` is `OWNER`                        | `"Cannot assign OWNER role through this endpoint"` |
+| `400`  | Client is already a member of this store | `"Client is already a member of this store"`   |
+| `401`  | Missing / invalid JWT                    | `"Authentication required"`                     |
+| `403`  | Not an ADMIN                             | `"Access denied"`                               |
+| `404`  | Store ID not found                       | `"Store not found with id: 99"`                 |
+| `404`  | `clientId` not found                     | `"Client not found with id: 99"`                |
+
+---
+
+#### `DELETE /api/v1/admin/stores/{storeId}/members/{clientId}`
+
+**Purpose:** Remove a PARTNER client from a store. Removing the OWNER is not permitted.  
+**Auth Required:** ✅ ADMIN  
+**HTTP Status (success):** `200 OK`
+
+##### Path Parameters
+
+| Name       | Type   | Required | Description                         |
+|------------|--------|----------|-------------------------------------|
+| `storeId`  | `Long` | ✅        | Store's primary key                 |
+| `clientId` | `Long` | ✅        | Client ID of the member to remove   |
+
+##### Success Response — `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Store member removed",
+  "timestamp": "2026-06-06T10:00:00.000Z"
+}
+```
+
+##### Error Responses
+
+| Status | Scenario                          | `message`                             |
+|--------|-----------------------------------|---------------------------------------|
+| `400`  | Attempting to remove the OWNER    | `"Cannot remove the store owner"`     |
+| `401`  | Missing / invalid JWT             | `"Authentication required"`           |
+| `403`  | Not an ADMIN                      | `"Access denied"`                     |
+| `404`  | Store ID not found                | `"Store not found with id: 99"`       |
+| `404`  | Client is not a member            | `"Member not found"`                  |
+
+---
+
+### 7.5 Admin — Daily Reports
 
 ---
 
@@ -1009,27 +1183,41 @@ PATCH /api/v1/admin/stores/1/status?status=INACTIVE
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `201 Created`
 
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
 ##### Request Body
 
-| Field          | Type         | Required | Validation                   |
-|----------------|--------------|----------|------------------------------|
-| `storeId`      | `Long`       | ✅        | Must not be null; store must exist |
-| `reportDate`   | `string`     | ✅        | ISO date format: `YYYY-MM-DD` |
-| `groceryTotal` | `number`     | ❌        | Decimal (BigDecimal), optional |
-| `volume`       | `number`     | ❌        | Decimal, optional            |
-| `cashDeposit`  | `number`     | ❌        | Decimal, optional            |
-| `checkDeposit` | `number`     | ❌        | Decimal, optional            |
-| `overShort`    | `number`     | ❌        | Decimal (can be negative), optional |
+| Field          | Type         | Required | Validation                           |
+|----------------|--------------|----------|--------------------------------------|
+| `storeId`      | `Long`       | ✅        | Must not be null; store must exist   |
+| `reportDate`   | `string`     | ✅        | ISO date format: `YYYY-MM-DD`        |
+| `groceryTotal` | `number`     | ❌        | Decimal (BigDecimal), optional       |
+| `volume`       | `number`     | ❌        | Decimal, optional                    |
+| `cashDeposit`  | `number`     | ❌        | Decimal, optional                    |
+| `checkDeposit` | `number`     | ❌        | Decimal, optional                    |
+| `overShort`    | `number`     | ❌        | Decimal (can be negative), optional  |
+| `noSale`       | `number`     | ❌        | Count of no-sale transactions        |
+| `lineVoid`     | `number`     | ❌        | Count of line void transactions      |
+| `voidAmount`   | `number`     | ❌        | Total voided dollar amount           |
+| `refunds`      | `number`     | ❌        | Total refunded dollar amount         |
 
 ```json
 {
   "storeId": 1,
-  "reportDate": "2026-05-28",
-  "groceryTotal": 10000.00,
-  "volume": 200.00,
+  "reportDate": "2026-06-05",
+  "groceryTotal": 12000.50,
+  "volume": 450.00,
   "cashDeposit": 5000.00,
-  "checkDeposit": 2000.00,
-  "overShort": 100.00
+  "checkDeposit": 3000.00,
+  "overShort": 25.00,
+  "noSale": 10.00,
+  "lineVoid": 5.00,
+  "voidAmount": 150.75,
+  "refunds": 80.25
 }
 ```
 
@@ -1043,39 +1231,47 @@ PATCH /api/v1/admin/stores/1/status?status=INACTIVE
     "dailyReportId": 1,
     "storeId": 1,
     "storeName": "Walmart Downtown",
-    "reportDate": "2026-05-28",
-    "groceryTotal": 10000.00,
-    "volume": 200.00,
+    "reportDate": "2026-06-05",
+    "groceryTotal": 12000.50,
+    "volume": 450.00,
     "cashDeposit": 5000.00,
-    "checkDeposit": 2000.00,
-    "overShort": 100.00
+    "checkDeposit": 3000.00,
+    "overShort": 25.00,
+    "noSale": 10.00,
+    "lineVoid": 5.00,
+    "voidAmount": 150.75,
+    "refunds": 80.25
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response — `data` Object Fields
+##### Response `data` Fields
 
-| Field           | Type         | Description                      |
-|-----------------|--------------|----------------------------------|
-| `dailyReportId` | `Long`       | Auto-generated report ID         |
-| `storeId`       | `Long`       | ID of the associated store       |
-| `storeName`     | `string`     | Name of the associated store     |
-| `reportDate`    | `string`     | Report date (`YYYY-MM-DD`)       |
-| `groceryTotal`  | `BigDecimal` | Total grocery sales              |
-| `volume`        | `BigDecimal` | Volume figure                    |
-| `cashDeposit`   | `BigDecimal` | Cash deposit amount              |
-| `checkDeposit`  | `BigDecimal` | Check deposit amount             |
-| `overShort`     | `BigDecimal` | Over/short amount (can be negative) |
+| Field           | Type         | Description                              |
+|-----------------|--------------|------------------------------------------|
+| `dailyReportId` | `Long`       | Auto-generated report ID                 |
+| `storeId`       | `Long`       | ID of the associated store               |
+| `storeName`     | `string`     | Name of the associated store             |
+| `reportDate`    | `string`     | Report date (`YYYY-MM-DD`)               |
+| `groceryTotal`  | `BigDecimal` | Total grocery sales (nullable)           |
+| `volume`        | `BigDecimal` | Volume figure (nullable)                 |
+| `cashDeposit`   | `BigDecimal` | Cash deposit amount (nullable)           |
+| `checkDeposit`  | `BigDecimal` | Check deposit amount (nullable)          |
+| `overShort`     | `BigDecimal` | Over/short amount — can be negative (nullable) |
+| `noSale`        | `BigDecimal` | No-sale transaction count (nullable)     |
+| `lineVoid`      | `BigDecimal` | Line void transaction count (nullable)   |
+| `voidAmount`    | `BigDecimal` | Total void dollar amount (nullable)      |
+| `refunds`       | `BigDecimal` | Total refund dollar amount (nullable)    |
 
 ##### Error Responses
 
-| Status | Scenario                     | Example `message`                |
-|--------|------------------------------|----------------------------------|
-| `400`  | Null `storeId` or `reportDate` | `"Validation failed"`          |
-| `401`  | Missing / invalid JWT        | `"Authentication required"`      |
-| `403`  | Not an ADMIN                 | `"Access denied"`                |
-| `404`  | `storeId` not found          | `"Store not found with id: 99"`  |
+| Status | Scenario                           | `message`                         |
+|--------|------------------------------------|-----------------------------------|
+| `400`  | Null `storeId` or `reportDate`     | `"Validation failed"` + `errors` map |
+| `401`  | Missing / invalid JWT              | `"Authentication required"`       |
+| `403`  | Not an ADMIN                       | `"Access denied"`                 |
+| `404`  | `storeId` not found                | `"Store not found with id: 99"`   |
 
 ---
 
@@ -1087,16 +1283,16 @@ PATCH /api/v1/admin/stores/1/status?status=INACTIVE
 
 ##### Query Parameters
 
-| Param      | Type         | Required | Description                            |
-|------------|--------------|----------|----------------------------------------|
-| `storeId`  | `Long`       | ❌        | Filter by store ID                     |
-| `clientId` | `Long`       | ❌        | Filter by client ID (all their stores) |
-| `from`     | `string`     | ❌        | Date range start — `YYYY-MM-DD`        |
-| `to`       | `string`     | ❌        | Date range end — `YYYY-MM-DD`          |
+| Param      | Type     | Required | Description                                              |
+|------------|----------|----------|----------------------------------------------------------|
+| `storeId`  | `Long`   | ❌        | Filter by store ID                                       |
+| `clientId` | `Long`   | ❌        | Filter by client ID (all stores where client is a member)|
+| `from`     | `string` | ❌        | Date range start — `YYYY-MM-DD`                          |
+| `to`       | `string` | ❌        | Date range end — `YYYY-MM-DD`                            |
 
-**Example request:**
+**Example:**
 ```
-GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
+GET /api/v1/admin/daily-reports?storeId=1&from=2026-06-01&to=2026-06-30
 ```
 
 ##### Success Response — `200 OK`
@@ -1110,21 +1306,25 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
       "dailyReportId": 1,
       "storeId": 1,
       "storeName": "Walmart Downtown",
-      "reportDate": "2026-05-28",
-      "groceryTotal": 10000.00,
-      "volume": 200.00,
+      "reportDate": "2026-06-05",
+      "groceryTotal": 12000.50,
+      "volume": 450.00,
       "cashDeposit": 5000.00,
-      "checkDeposit": 2000.00,
-      "overShort": 100.00
+      "checkDeposit": 3000.00,
+      "overShort": 25.00,
+      "noSale": 10.00,
+      "lineVoid": 5.00,
+      "voidAmount": 150.75,
+      "refunds": 80.25
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`           |
+| Status | Scenario              | `message`                   |
 |--------|-----------------------|-----------------------------|
 | `401`  | Missing / invalid JWT | `"Authentication required"` |
 | `403`  | Not an ADMIN          | `"Access denied"`           |
@@ -1137,11 +1337,11 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -1154,61 +1354,73 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
       "dailyReportId": 1,
       "storeId": 1,
       "storeName": "Walmart Downtown",
-      "reportDate": "2026-05-28",
-      "groceryTotal": 10000.00,
-      "volume": 200.00,
+      "reportDate": "2026-06-05",
+      "groceryTotal": 12000.50,
+      "volume": 450.00,
       "cashDeposit": 5000.00,
-      "checkDeposit": 2000.00,
-      "overShort": 100.00
+      "checkDeposit": 3000.00,
+      "overShort": 25.00,
+      "noSale": 10.00,
+      "lineVoid": 5.00,
+      "voidAmount": 150.75,
+      "refunds": 80.25
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`                  |
-|--------|-----------------------|------------------------------------|
-| `401`  | Missing / invalid JWT | `"Authentication required"`        |
-| `403`  | Not an ADMIN          | `"Access denied"`                  |
-| `404`  | Store ID not found    | `"Store not found with id: 99"`    |
+| Status | Scenario              | `message`                        |
+|--------|-----------------------|----------------------------------|
+| `401`  | Missing / invalid JWT | `"Authentication required"`      |
+| `403`  | Not an ADMIN          | `"Access denied"`                |
+| `404`  | Store ID not found    | `"Store not found with id: 99"`  |
 
 ---
 
 #### `PUT /api/v1/admin/daily-reports/{dailyReportId}`
 
-**Purpose:** Update an existing daily report. All fields are optional.  
+**Purpose:** Update an existing daily report. All fields are optional (partial update).  
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name            | Type   | Description              |
-|-----------------|--------|--------------------------|
-| `dailyReportId` | `Long` | Daily report's primary key |
+| Name            | Type   | Required | Description               |
+|-----------------|--------|----------|---------------------------|
+| `dailyReportId` | `Long` | ✅        | Daily report's primary key |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
 
 ##### Request Body
 
-| Field          | Type         | Required | Validation              |
-|----------------|--------------|----------|-------------------------|
-| `storeId`      | `Long`       | ❌        | If provided, store must exist |
-| `reportDate`   | `string`     | ❌        | ISO date `YYYY-MM-DD`   |
-| `groceryTotal` | `number`     | ❌        | Decimal                 |
-| `volume`       | `number`     | ❌        | Decimal                 |
-| `cashDeposit`  | `number`     | ❌        | Decimal                 |
-| `checkDeposit` | `number`     | ❌        | Decimal                 |
-| `overShort`    | `number`     | ❌        | Decimal                 |
+| Field          | Type         | Required | Validation                        |
+|----------------|--------------|----------|-----------------------------------|
+| `storeId`      | `Long`       | ❌        | If provided, store must exist     |
+| `reportDate`   | `string`     | ❌        | ISO date `YYYY-MM-DD`             |
+| `groceryTotal` | `number`     | ❌        | Decimal                           |
+| `volume`       | `number`     | ❌        | Decimal                           |
+| `cashDeposit`  | `number`     | ❌        | Decimal                           |
+| `checkDeposit` | `number`     | ❌        | Decimal                           |
+| `overShort`    | `number`     | ❌        | Decimal                           |
+| `noSale`       | `number`     | ❌        | Decimal                           |
+| `lineVoid`     | `number`     | ❌        | Decimal                           |
+| `voidAmount`   | `number`     | ❌        | Decimal                           |
+| `refunds`      | `number`     | ❌        | Decimal                           |
 
 ```json
 {
-  "storeId": 1,
-  "reportDate": "2026-05-28",
-  "groceryTotal": 12000.00,
-  "volume": 250.00,
-  "cashDeposit": 6000.00,
-  "checkDeposit": 2500.00,
-  "overShort": 50.00
+  "groceryTotal": 13500.00,
+  "overShort": -15.00,
+  "noSale": 8.00,
+  "voidAmount": 200.00,
+  "refunds": 95.00
 }
 ```
 
@@ -1222,29 +1434,33 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
     "dailyReportId": 1,
     "storeId": 1,
     "storeName": "Walmart Downtown",
-    "reportDate": "2026-05-28",
-    "groceryTotal": 12000.00,
-    "volume": 250.00,
-    "cashDeposit": 6000.00,
-    "checkDeposit": 2500.00,
-    "overShort": 50.00
+    "reportDate": "2026-06-05",
+    "groceryTotal": 13500.00,
+    "volume": 450.00,
+    "cashDeposit": 5000.00,
+    "checkDeposit": 3000.00,
+    "overShort": -15.00,
+    "noSale": 8.00,
+    "lineVoid": 5.00,
+    "voidAmount": 200.00,
+    "refunds": 95.00
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                    | Example `message`                      |
-|--------|-----------------------------|----------------------------------------|
-| `401`  | Missing / invalid JWT       | `"Authentication required"`            |
-| `403`  | Not an ADMIN                | `"Access denied"`                      |
-| `404`  | Daily report ID not found   | `"Daily report not found with id: 99"` |
-| `404`  | Provided `storeId` not found | `"Store not found with id: 99"`       |
+| Status | Scenario                     | `message`                               |
+|--------|------------------------------|-----------------------------------------|
+| `401`  | Missing / invalid JWT        | `"Authentication required"`             |
+| `403`  | Not an ADMIN                 | `"Access denied"`                       |
+| `404`  | Daily report ID not found    | `"Daily report not found with id: 99"`  |
+| `404`  | Provided `storeId` not found | `"Store not found with id: 99"`         |
 
 ---
 
-### 7.5 Admin — Monthly Reports
+### 7.6 Admin — Monthly Reports
 
 ---
 
@@ -1254,26 +1470,32 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `201 Created`
 
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
 ##### Request Body
 
-| Field            | Type         | Required | Validation                              |
-|------------------|--------------|----------|-----------------------------------------|
-| `storeId`        | `Long`       | ✅        | Must not be null; store must exist      |
-| `reportMonth`    | `integer`    | ✅        | Must not be null; 1–12                  |
-| `reportYear`     | `integer`    | ✅        | Must not be null; e.g. `2026`           |
-| `departmentId`   | `integer`    | ❌        | Optional department identifier          |
-| `departmentName` | `string`     | ❌        | Optional department name                |
-| `gross`          | `number`     | ❌        | Decimal, optional                       |
-| `discount`       | `number`     | ❌        | Decimal, optional                       |
-| `promotion`      | `number`     | ❌        | Decimal, optional                       |
-| `refund`         | `number`     | ❌        | Decimal, optional                       |
-| `voidAmount`     | `number`     | ❌        | Decimal, optional                       |
-| `netSales`       | `number`     | ❌        | Decimal, optional                       |
+| Field            | Type         | Required | Validation                         |
+|------------------|--------------|----------|------------------------------------|
+| `storeId`        | `Long`       | ✅        | Must not be null; store must exist |
+| `reportMonth`    | `integer`    | ✅        | Must not be null; 1–12             |
+| `reportYear`     | `integer`    | ✅        | Must not be null; e.g. `2026`      |
+| `departmentId`   | `integer`    | ❌        | Optional department identifier     |
+| `departmentName` | `string`     | ❌        | Optional department name           |
+| `gross`          | `number`     | ❌        | Decimal, optional                  |
+| `discount`       | `number`     | ❌        | Decimal, optional                  |
+| `promotion`      | `number`     | ❌        | Decimal, optional                  |
+| `refund`         | `number`     | ❌        | Decimal, optional                  |
+| `voidAmount`     | `number`     | ❌        | Decimal, optional                  |
+| `netSales`       | `number`     | ❌        | Decimal, optional                  |
 
 ```json
 {
   "storeId": 1,
-  "reportMonth": 5,
+  "reportMonth": 6,
   "reportYear": 2026,
   "departmentId": 1,
   "departmentName": "Grocery",
@@ -1296,7 +1518,7 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
     "monthlyReportId": 1,
     "storeId": 1,
     "storeName": "Walmart Downtown",
-    "reportMonth": 5,
+    "reportMonth": 6,
     "reportYear": 2026,
     "departmentId": 1,
     "departmentName": "Grocery",
@@ -1307,36 +1529,36 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
     "voidAmount": 500.00,
     "netSales": 41500.00
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response — `data` Object Fields
+##### Response `data` Fields
 
-| Field             | Type         | Description                             |
-|-------------------|--------------|-----------------------------------------|
-| `monthlyReportId` | `Long`       | Auto-generated report ID                |
-| `storeId`         | `Long`       | ID of the associated store              |
-| `storeName`       | `string`     | Name of the associated store            |
-| `reportMonth`     | `integer`    | Month (1–12)                            |
-| `reportYear`      | `integer`    | Year (e.g. `2026`)                      |
-| `departmentId`    | `integer`    | Department identifier (nullable)        |
-| `departmentName`  | `string`     | Department name (nullable)              |
-| `gross`           | `BigDecimal` | Gross sales                             |
-| `discount`        | `BigDecimal` | Discount amount                         |
-| `promotion`       | `BigDecimal` | Promotion deduction                     |
-| `refund`          | `BigDecimal` | Refund amount                           |
-| `voidAmount`      | `BigDecimal` | Voided transaction amount               |
-| `netSales`        | `BigDecimal` | Net sales after deductions              |
+| Field             | Type         | Description                            |
+|-------------------|--------------|----------------------------------------|
+| `monthlyReportId` | `Long`       | Auto-generated report ID               |
+| `storeId`         | `Long`       | ID of the associated store             |
+| `storeName`       | `string`     | Name of the associated store           |
+| `reportMonth`     | `integer`    | Month (1–12)                           |
+| `reportYear`      | `integer`    | Year (e.g. `2026`)                     |
+| `departmentId`    | `integer`    | Department identifier (nullable)       |
+| `departmentName`  | `string`     | Department name (nullable)             |
+| `gross`           | `BigDecimal` | Gross sales (nullable)                 |
+| `discount`        | `BigDecimal` | Discount amount (nullable)             |
+| `promotion`       | `BigDecimal` | Promotion deduction (nullable)         |
+| `refund`          | `BigDecimal` | Refund amount (nullable)               |
+| `voidAmount`      | `BigDecimal` | Voided transaction amount (nullable)   |
+| `netSales`        | `BigDecimal` | Net sales after deductions (nullable)  |
 
 ##### Error Responses
 
-| Status | Scenario                          | Example `message`               |
-|--------|-----------------------------------|---------------------------------|
-| `400`  | Null `storeId`, `reportMonth`, or `reportYear` | `"Validation failed"` |
-| `401`  | Missing / invalid JWT             | `"Authentication required"`     |
-| `403`  | Not an ADMIN                      | `"Access denied"`               |
-| `404`  | `storeId` not found               | `"Store not found with id: 99"` |
+| Status | Scenario                                         | `message`                         |
+|--------|--------------------------------------------------|-----------------------------------|
+| `400`  | Null `storeId`, `reportMonth`, or `reportYear`   | `"Validation failed"` + `errors` map |
+| `401`  | Missing / invalid JWT                            | `"Authentication required"`       |
+| `403`  | Not an ADMIN                                     | `"Access denied"`                 |
+| `404`  | `storeId` not found                              | `"Store not found with id: 99"`   |
 
 ---
 
@@ -1348,16 +1570,16 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-05-01&to=2026-05-31
 
 ##### Query Parameters
 
-| Param      | Type      | Required | Description                             |
-|------------|-----------|----------|-----------------------------------------|
-| `storeId`  | `Long`    | ❌        | Filter by store ID                      |
-| `clientId` | `Long`    | ❌        | Filter by client ID                     |
-| `year`     | `integer` | ❌        | Filter by report year                   |
-| `month`    | `integer` | ❌        | Filter by report month (1–12)           |
+| Param      | Type      | Required | Description                              |
+|------------|-----------|----------|------------------------------------------|
+| `storeId`  | `Long`    | ❌        | Filter by store ID                       |
+| `clientId` | `Long`    | ❌        | Filter by client ID                      |
+| `year`     | `integer` | ❌        | Filter by report year                    |
+| `month`    | `integer` | ❌        | Filter by report month (1–12)            |
 
-**Example request:**
+**Example:**
 ```
-GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
+GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=6
 ```
 
 ##### Success Response — `200 OK`
@@ -1371,7 +1593,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
       "monthlyReportId": 1,
       "storeId": 1,
       "storeName": "Walmart Downtown",
-      "reportMonth": 5,
+      "reportMonth": 6,
       "reportYear": 2026,
       "departmentId": 1,
       "departmentName": "Grocery",
@@ -1383,13 +1605,13 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
       "netSales": 41500.00
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`           |
+| Status | Scenario              | `message`                   |
 |--------|-----------------------|-----------------------------|
 | `401`  | Missing / invalid JWT | `"Authentication required"` |
 | `403`  | Not an ADMIN          | `"Access denied"`           |
@@ -1402,11 +1624,11 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -1419,7 +1641,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
       "monthlyReportId": 1,
       "storeId": 1,
       "storeName": "Walmart Downtown",
-      "reportMonth": 5,
+      "reportMonth": 6,
       "reportYear": 2026,
       "departmentId": 1,
       "departmentName": "Grocery",
@@ -1431,17 +1653,17 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
       "netSales": 41500.00
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`                 |
-|--------|-----------------------|-----------------------------------|
-| `401`  | Missing / invalid JWT | `"Authentication required"`       |
-| `403`  | Not an ADMIN          | `"Access denied"`                 |
-| `404`  | Store ID not found    | `"Store not found with id: 99"`   |
+| Status | Scenario              | `message`                        |
+|--------|-----------------------|----------------------------------|
+| `401`  | Missing / invalid JWT | `"Authentication required"`      |
+| `403`  | Not an ADMIN          | `"Access denied"`                |
+| `404`  | Store ID not found    | `"Store not found with id: 99"`  |
 
 ---
 
@@ -1451,40 +1673,40 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name              | Type   | Description                |
-|-------------------|--------|----------------------------|
-| `monthlyReportId` | `Long` | Monthly report's primary key |
+| Name              | Type   | Required | Description                  |
+|-------------------|--------|----------|------------------------------|
+| `monthlyReportId` | `Long` | ✅        | Monthly report's primary key |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
 
 ##### Request Body
 
-| Field            | Type      | Required | Description                              |
-|------------------|-----------|----------|------------------------------------------|
-| `storeId`        | `Long`    | ❌        | If provided, store must exist            |
-| `reportMonth`    | `integer` | ❌        | Month (1–12)                             |
-| `reportYear`     | `integer` | ❌        | Year                                     |
-| `departmentId`   | `integer` | ❌        | Department identifier                    |
-| `departmentName` | `string`  | ❌        | Department name                          |
-| `gross`          | `number`  | ❌        | Decimal                                  |
-| `discount`       | `number`  | ❌        | Decimal                                  |
-| `promotion`      | `number`  | ❌        | Decimal                                  |
-| `refund`         | `number`  | ❌        | Decimal                                  |
-| `voidAmount`     | `number`  | ❌        | Decimal                                  |
-| `netSales`       | `number`  | ❌        | Decimal                                  |
+| Field            | Type      | Required | Description                             |
+|------------------|-----------|----------|-----------------------------------------|
+| `storeId`        | `Long`    | ❌        | If provided, store must exist           |
+| `reportMonth`    | `integer` | ❌        | Month (1–12)                            |
+| `reportYear`     | `integer` | ❌        | Year                                    |
+| `departmentId`   | `integer` | ❌        | Department identifier                   |
+| `departmentName` | `string`  | ❌        | Department name                         |
+| `gross`          | `number`  | ❌        | Decimal                                 |
+| `discount`       | `number`  | ❌        | Decimal                                 |
+| `promotion`      | `number`  | ❌        | Decimal                                 |
+| `refund`         | `number`  | ❌        | Decimal                                 |
+| `voidAmount`     | `number`  | ❌        | Decimal                                 |
+| `netSales`       | `number`  | ❌        | Decimal                                 |
 
 ```json
 {
-  "storeId": 1,
-  "reportMonth": 5,
-  "reportYear": 2026,
   "departmentId": 2,
   "departmentName": "Electronics",
   "gross": 60000.00,
   "discount": 3000.00,
-  "promotion": 1500.00,
-  "refund": 500.00,
-  "voidAmount": 200.00,
   "netSales": 54800.00
 }
 ```
@@ -1499,62 +1721,95 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=5
     "monthlyReportId": 1,
     "storeId": 1,
     "storeName": "Walmart Downtown",
-    "reportMonth": 5,
+    "reportMonth": 6,
     "reportYear": 2026,
     "departmentId": 2,
     "departmentName": "Electronics",
     "gross": 60000.00,
     "discount": 3000.00,
-    "promotion": 1500.00,
-    "refund": 500.00,
-    "voidAmount": 200.00,
+    "promotion": 2000.00,
+    "refund": 1000.00,
+    "voidAmount": 500.00,
     "netSales": 54800.00
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                       | Example `message`                         |
-|--------|--------------------------------|-------------------------------------------|
-| `401`  | Missing / invalid JWT          | `"Authentication required"`               |
-| `403`  | Not an ADMIN                   | `"Access denied"`                         |
-| `404`  | Monthly report ID not found    | `"Monthly report not found with id: 99"`  |
-| `404`  | Provided `storeId` not found   | `"Store not found with id: 99"`           |
+| Status | Scenario                      | `message`                                   |
+|--------|-------------------------------|---------------------------------------------|
+| `401`  | Missing / invalid JWT         | `"Authentication required"`                 |
+| `403`  | Not an ADMIN                  | `"Access denied"`                           |
+| `404`  | Monthly report ID not found   | `"Monthly report not found with id: 99"`    |
+| `404`  | Provided `storeId` not found  | `"Store not found with id: 99"`             |
 
 ---
 
 #### `POST /api/v1/admin/monthly-reports/upload`
 
-**Purpose:** Bulk-upload monthly reports from an Excel (`.xlsx`) file for a specific store, month, and year. If reports already exist for that store/month/year combination, they are deleted and replaced.  
+**Purpose:** Bulk-upload monthly reports from an Excel (`.xlsx`) file for a specific store, month, and year. Existing reports for the same store/month/year combination are deleted and replaced.  
 **Auth Required:** ✅ ADMIN  
 **Content-Type:** `multipart/form-data`  
 **HTTP Status (success):** `201 Created`
 
 ##### Request — Form Parameters
 
-| Parameter     | Type       | Required | Description                         |
-|---------------|------------|----------|-------------------------------------|
-| `storeId`     | `Long`     | ✅        | Target store ID                     |
-| `reportMonth` | `integer`  | ✅        | Target month (1–12)                 |
-| `reportYear`  | `integer`  | ✅        | Target year (e.g. `2026`)           |
-| `file`        | `file`     | ✅        | Excel `.xlsx` file (single file only)|
+| Parameter     | Type      | Required | Description                              |
+|---------------|-----------|----------|------------------------------------------|
+| `storeId`     | `Long`    | ✅        | Target store ID                          |
+| `reportMonth` | `integer` | ✅        | Target month (1–12)                      |
+| `reportYear`  | `integer` | ✅        | Target year (e.g. `2026`)                |
+| `file`        | `file`    | ✅        | Excel `.xlsx` file                       |
 
-**Example curl:**
-```bash
-curl -X POST "http://localhost:8080/api/v1/admin/monthly-reports/upload?storeId=1&reportMonth=5&reportYear=2026" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -F "file=@monthly-reports.xlsx"
+##### Filename Validation
+
+The uploaded file's name **must** match the pattern:
+
 ```
+monthly_<reportMonth>_<reportYear>.xlsx
+```
+
+Regex: `^monthly_(\d{1,2})_(\d{4})\.xlsx$`
+
+The month and year extracted from the filename must exactly match the `reportMonth` and `reportYear` form parameters. Validation runs before the Excel content is parsed.
+
+| Example filename       | `reportMonth` | `reportYear` | Valid? |
+|------------------------|---------------|--------------|--------|
+| `monthly_8_2026.xlsx`  | `8`           | `2026`       | ✅      |
+| `monthly_12_2025.xlsx` | `12`          | `2025`       | ✅      |
+| `monthly_7_2026.xlsx`  | `8`           | `2026`       | ❌ Month mismatch |
+| `monthly_8_2025.xlsx`  | `8`           | `2026`       | ❌ Year mismatch  |
+| `sales_aug_2026.xlsx`  | `8`           | `2026`       | ❌ Pattern mismatch |
+| `monthly_aug_2026.xlsx`| `8`           | `2026`       | ❌ Non-numeric month |
 
 ##### Expected Excel File Format
 
-Each row in the uploaded Excel file should represent one monthly report entry. The columns correspond to the monthly report fields: `departmentId`, `departmentName`, `gross`, `discount`, `promotion`, `refund`, `voidAmount`, `netSales`.
+Each data row (after the header row) represents one monthly report entry.
 
-##### Success Response — `201 Created`
+| Column (0-based) | Name             | Type      | Required |
+|------------------|------------------|-----------|----------|
+| 0                | `department`     | `string`  | ✅        |
+| 1                | `dept id`        | `integer` | ✅        |
+| 2                | `gross`          | `decimal` | ✅        |
+| 3                | `discount`       | `decimal` | ✅        |
+| 4                | `promotion`      | `decimal` | ✅        |
+| 5                | `refund`         | `decimal` | ✅        |
+| 6                | `void`           | `decimal` | ✅        |
+| 7                | `net sales`      | `decimal` | ✅        |
 
-**When records were inserted fresh (no prior data):**
+Header names are case-insensitive and trimmed during validation.
+
+**Example curl:**
+```bash
+curl -X POST \
+  "http://localhost:8080/api/v1/admin/monthly-reports/upload?storeId=1&reportMonth=8&reportYear=2026" \
+  -F "file=@monthly_8_2026.xlsx"
+```
+
+##### Success Response — `201 Created` (fresh insert, no prior data)
+
 ```json
 {
   "success": true,
@@ -1564,11 +1819,12 @@ Each row in the uploaded Excel file should represent one monthly report entry. T
     "insertedRows": 10,
     "deletedRows": 0
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-**When existing records were replaced:**
+##### Success Response — `201 Created` (existing records replaced)
+
 ```json
 {
   "success": true,
@@ -1578,32 +1834,40 @@ Each row in the uploaded Excel file should represent one monthly report entry. T
     "insertedRows": 10,
     "deletedRows": 8
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response — `data` Object Fields
+##### Response `data` Fields
 
-| Field          | Type      | Description                                       |
-|----------------|-----------|---------------------------------------------------|
-| `totalRows`    | `integer` | Total rows found in the uploaded Excel file       |
-| `insertedRows` | `integer` | Number of rows successfully inserted              |
-| `deletedRows`  | `long`    | Number of existing records deleted before import  |
+| Field          | Type      | Description                                         |
+|----------------|-----------|-----------------------------------------------------|
+| `totalRows`    | `integer` | Total data rows found in the uploaded Excel file    |
+| `insertedRows` | `integer` | Number of rows successfully inserted                |
+| `deletedRows`  | `long`    | Number of existing records deleted before import    |
 
 ##### Error Responses
 
-| Status | Scenario                                | Example `message`                    |
-|--------|-----------------------------------------|--------------------------------------|
-| `400`  | File is not a valid `.xlsx`             | `"Only .xlsx files are supported"`   |
-| `400`  | Missing `storeId`, `reportMonth`, or `reportYear` | `"Bad request"`            |
-| `401`  | Missing / invalid JWT                   | `"Authentication required"`          |
-| `403`  | Not an ADMIN                            | `"Access denied"`                    |
-| `404`  | `storeId` not found                     | `"Store not found with id: 99"`      |
-| `500`  | File parsing error                      | `"Unexpected error"`                 |
+| Status | Scenario                                              | `message`                                                                         |
+|--------|-------------------------------------------------------|-----------------------------------------------------------------------------------|
+| `400`  | Filename is null                                      | `"Uploaded file name is missing"`                                                 |
+| `400`  | Filename does not match pattern or month/year mismatch| `"Uploaded file name does not match report month and year. Expected: monthly_8_2026.xlsx"` |
+| `400`  | File is empty                                         | `"Excel file is required"`                                                        |
+| `400`  | File is not `.xlsx`                                   | `"Only .xlsx Excel files are accepted"`                                           |
+| `400`  | Missing `storeId`, `reportMonth`, or `reportYear`     | `"Store ID is required"` / `"Report month must be between 1 and 12"` / `"Report year is required"` |
+| `400`  | `reportMonth` out of range (< 1 or > 12)              | `"Report month must be between 1 and 12"`                                         |
+| `400`  | Excel sheet missing or header row missing             | `"Excel sheet is missing"` / `"Header row is missing"`                            |
+| `400`  | Header column mismatch                                | `"Header mismatch at column 3: expected 'discount'"`                              |
+| `400`  | Required cell empty in a data row                     | `"Row 3: Gross is required"`                                                      |
+| `400`  | No data rows found                                    | `"No data rows found in Excel file"`                                              |
+| `401`  | Missing / invalid JWT                                 | `"Authentication required"`                                                       |
+| `403`  | Not an ADMIN                                          | `"Access denied"`                                                                 |
+| `404`  | `storeId` not found                                   | `"Store not found with id: 99"`                                                   |
+| `500`  | File I/O error                                        | `"Unexpected error"`                                                              |
 
 ---
 
-### 7.6 Admin — Yearly Reports
+### 7.7 Admin — Yearly Reports
 
 ---
 
@@ -1613,13 +1877,19 @@ Each row in the uploaded Excel file should represent one monthly report entry. T
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `201 Created`
 
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
 ##### Request Body
 
-| Field           | Type      | Required | Validation                       |
-|-----------------|-----------|----------|----------------------------------|
-| `storeId`       | `Long`    | ✅        | Must not be null; store must exist |
-| `reportYear`    | `integer` | ✅        | Must not be null; e.g. `2026`    |
-| `annualSummary` | `string`  | ❌        | Optional narrative summary       |
+| Field           | Type      | Required | Validation                          |
+|-----------------|-----------|----------|-------------------------------------|
+| `storeId`       | `Long`    | ✅        | Must not be null; store must exist  |
+| `reportYear`    | `integer` | ✅        | Must not be null; e.g. `2026`       |
+| `annualSummary` | `string`  | ❌        | Optional narrative summary          |
 
 ```json
 {
@@ -1642,11 +1912,11 @@ Each row in the uploaded Excel file should represent one monthly report entry. T
     "reportYear": 2026,
     "annualSummary": "Excellent yearly sales growth of 18% over prior year."
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
-##### Response — `data` Object Fields
+##### Response `data` Fields
 
 | Field            | Type      | Description                          |
 |------------------|-----------|--------------------------------------|
@@ -1658,12 +1928,12 @@ Each row in the uploaded Excel file should represent one monthly report entry. T
 
 ##### Error Responses
 
-| Status | Scenario                       | Example `message`               |
-|--------|--------------------------------|---------------------------------|
-| `400`  | Null `storeId` or `reportYear` | `"Validation failed"`           |
-| `401`  | Missing / invalid JWT          | `"Authentication required"`     |
-| `403`  | Not an ADMIN                   | `"Access denied"`               |
-| `404`  | `storeId` not found            | `"Store not found with id: 99"` |
+| Status | Scenario                        | `message`                         |
+|--------|---------------------------------|-----------------------------------|
+| `400`  | Null `storeId` or `reportYear`  | `"Validation failed"` + `errors` map |
+| `401`  | Missing / invalid JWT           | `"Authentication required"`       |
+| `403`  | Not an ADMIN                    | `"Access denied"`                 |
+| `404`  | `storeId` not found             | `"Store not found with id: 99"`   |
 
 ---
 
@@ -1675,13 +1945,13 @@ Each row in the uploaded Excel file should represent one monthly report entry. T
 
 ##### Query Parameters
 
-| Param      | Type      | Required | Description                          |
-|------------|-----------|----------|--------------------------------------|
-| `storeId`  | `Long`    | ❌        | Filter by store ID                   |
-| `clientId` | `Long`    | ❌        | Filter by client ID                  |
-| `year`     | `integer` | ❌        | Filter by report year                |
+| Param      | Type      | Required | Description            |
+|------------|-----------|----------|------------------------|
+| `storeId`  | `Long`    | ❌        | Filter by store ID     |
+| `clientId` | `Long`    | ❌        | Filter by client ID    |
+| `year`     | `integer` | ❌        | Filter by report year  |
 
-**Example request:**
+**Example:**
 ```
 GET /api/v1/admin/yearly-reports?clientId=1&year=2026
 ```
@@ -1701,13 +1971,13 @@ GET /api/v1/admin/yearly-reports?clientId=1&year=2026
       "annualSummary": "Excellent yearly sales growth of 18% over prior year."
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`           |
+| Status | Scenario              | `message`                   |
 |--------|-----------------------|-----------------------------|
 | `401`  | Missing / invalid JWT | `"Authentication required"` |
 | `403`  | Not an ADMIN          | `"Access denied"`           |
@@ -1720,11 +1990,11 @@ GET /api/v1/admin/yearly-reports?clientId=1&year=2026
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -1741,17 +2011,17 @@ GET /api/v1/admin/yearly-reports?clientId=1&year=2026
       "annualSummary": "Excellent yearly sales growth of 18% over prior year."
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario              | Example `message`                 |
-|--------|-----------------------|-----------------------------------|
-| `401`  | Missing / invalid JWT | `"Authentication required"`       |
-| `403`  | Not an ADMIN          | `"Access denied"`                 |
-| `404`  | Store ID not found    | `"Store not found with id: 99"`   |
+| Status | Scenario              | `message`                        |
+|--------|-----------------------|----------------------------------|
+| `401`  | Missing / invalid JWT | `"Authentication required"`      |
+| `403`  | Not an ADMIN          | `"Access denied"`                |
+| `404`  | Store ID not found    | `"Store not found with id: 99"`  |
 
 ---
 
@@ -1761,24 +2031,28 @@ GET /api/v1/admin/yearly-reports?clientId=1&year=2026
 **Auth Required:** ✅ ADMIN  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name             | Type   | Description               |
-|------------------|--------|---------------------------|
-| `yearlyReportId` | `Long` | Yearly report's primary key |
+| Name             | Type   | Required | Description                  |
+|------------------|--------|----------|------------------------------|
+| `yearlyReportId` | `Long` | ✅        | Yearly report's primary key  |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
 
 ##### Request Body
 
-| Field           | Type      | Required | Description               |
-|-----------------|-----------|----------|---------------------------|
-| `storeId`       | `Long`    | ❌        | If provided, store must exist |
-| `reportYear`    | `integer` | ❌        | Year                      |
-| `annualSummary` | `string`  | ❌        | Updated summary text      |
+| Field           | Type      | Required | Description                       |
+|-----------------|-----------|----------|-----------------------------------|
+| `storeId`       | `Long`    | ❌        | If provided, store must exist     |
+| `reportYear`    | `integer` | ❌        | Year                              |
+| `annualSummary` | `string`  | ❌        | Updated summary text              |
 
 ```json
 {
-  "storeId": 1,
-  "reportYear": 2026,
   "annualSummary": "Updated annual summary with revised figures."
 }
 ```
@@ -1796,30 +2070,30 @@ GET /api/v1/admin/yearly-reports?clientId=1&year=2026
     "reportYear": 2026,
     "annualSummary": "Updated annual summary with revised figures."
   },
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                      | Example `message`                        |
-|--------|-------------------------------|------------------------------------------|
-| `401`  | Missing / invalid JWT         | `"Authentication required"`              |
-| `403`  | Not an ADMIN                  | `"Access denied"`                        |
-| `404`  | Yearly report ID not found    | `"Yearly report not found with id: 99"`  |
-| `404`  | Provided `storeId` not found  | `"Store not found with id: 99"`          |
+| Status | Scenario                     | `message`                               |
+|--------|------------------------------|-----------------------------------------|
+| `401`  | Missing / invalid JWT        | `"Authentication required"`             |
+| `403`  | Not an ADMIN                 | `"Access denied"`                       |
+| `404`  | Yearly report ID not found   | `"Yearly report not found with id: 99"` |
+| `404`  | Provided `storeId` not found | `"Store not found with id: 99"`         |
 
 ---
 
-### 7.7 Client — Store Access
+### 7.8 Client — Store Access
 
-> All endpoints under `/api/v1/client/**` require a valid `access_token` cookie with role `CLIENT`. The cookie is attached automatically by the browser on every request. The client's identity is derived from the JWT — they can only access data belonging to their own account.
+> All endpoints under `/api/v1/client/**` require a valid `access_token` cookie with role `CLIENT`. The client's identity is extracted from the JWT — no additional headers are required.
 
 ---
 
 #### `GET /api/v1/client/stores`
 
-**Purpose:** Retrieve all stores owned by the currently authenticated client.  
+**Purpose:** Retrieve all stores where the authenticated client is a member (OWNER or PARTNER). Each store in the response includes the client's role for that store.  
 **Auth Required:** ✅ CLIENT  
 **HTTP Status (success):** `200 OK`
 
@@ -1836,53 +2110,69 @@ No request body or query parameters. The client identity is extracted from the J
   "data": [
     {
       "storeId": 1,
-      "clientId": 3,
+      "clientId": 1,
       "clientName": "John Doe",
       "storeName": "Walmart Downtown",
       "storeCode": "WM001",
       "address": "California",
       "contactNumber": "9876543210",
-      "status": "ACTIVE"
+      "status": "ACTIVE",
+      "clientRole": "OWNER"
     },
     {
-      "storeId": 2,
-      "clientId": 3,
-      "clientName": "John Doe",
-      "storeName": "Walmart Uptown",
-      "storeCode": "WM002",
+      "storeId": 3,
+      "clientId": 2,
+      "clientName": "Jane Smith",
+      "storeName": "Target Uptown",
+      "storeCode": "TG001",
       "address": "Nevada",
       "contactNumber": "9111111111",
-      "status": "ACTIVE"
+      "status": "ACTIVE",
+      "clientRole": "PARTNER"
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
+##### Response `data` Item Fields
+
+| Field           | Type     | Description                                                    |
+|-----------------|----------|----------------------------------------------------------------|
+| `storeId`       | `Long`   | Store's primary key                                            |
+| `clientId`      | `Long`   | ID of the store's OWNER                                        |
+| `clientName`    | `string` | Full name of the store's OWNER                                 |
+| `storeName`     | `string` | Store name                                                     |
+| `storeCode`     | `string` | Unique store code                                              |
+| `address`       | `string` | Store address (nullable)                                       |
+| `contactNumber` | `string` | Contact number (nullable)                                      |
+| `status`        | `string` | `ACTIVE` or `INACTIVE`                                         |
+| `clientRole`    | `string` | The authenticated client's role for this store: `OWNER` or `PARTNER` |
+
 ##### Error Responses
 
-| Status | Scenario                                      | Example `message`           |
-|--------|-----------------------------------------------|-----------------------------|
-| `401`  | Missing / invalid JWT                         | `"Authentication required"` |
-| `403`  | Authenticated but not a CLIENT role           | `"Access denied"`           |
+| Status | Scenario                            | `message`                   |
+|--------|-------------------------------------|-----------------------------|
+| `401`  | Missing / invalid JWT               | `"Authentication required"` |
+| `403`  | Authenticated but not a CLIENT role | `"Access denied"`           |
 
 ---
 
-### 7.8 Client — Daily Reports
+### 7.9 Client — Daily Reports
 
 ---
 
 #### `GET /api/v1/client/daily-reports/store/{storeId}`
 
-**Purpose:** Retrieve all daily reports for a specific store, enforcing that the store belongs to the authenticated client.  
+**Purpose:** Retrieve all daily reports for a specific store. Access is granted only if the authenticated client is a member (OWNER or PARTNER) of the store.  
 **Auth Required:** ✅ CLIENT  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -1895,44 +2185,48 @@ No request body or query parameters. The client identity is extracted from the J
       "dailyReportId": 1,
       "storeId": 1,
       "storeName": "Walmart Downtown",
-      "reportDate": "2026-05-28",
-      "groceryTotal": 10000.00,
-      "volume": 200.00,
+      "reportDate": "2026-06-05",
+      "groceryTotal": 12000.50,
+      "volume": 450.00,
       "cashDeposit": 5000.00,
-      "checkDeposit": 2000.00,
-      "overShort": 100.00
+      "checkDeposit": 3000.00,
+      "overShort": 25.00,
+      "noSale": 10.00,
+      "lineVoid": 5.00,
+      "voidAmount": 150.75,
+      "refunds": 80.25
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                                        | Example `message`                        |
-|--------|-------------------------------------------------|------------------------------------------|
-| `401`  | Missing / invalid JWT                           | `"Authentication required"`              |
-| `403`  | Not a CLIENT role                               | `"Access denied"`                        |
-| `403`  | Store does not belong to this client            | `"Access denied"`                        |
-| `404`  | Store ID not found                              | `"Store not found with id: 99"`          |
+| Status | Scenario                                        | `message`                        |
+|--------|-------------------------------------------------|----------------------------------|
+| `401`  | Missing / invalid JWT                           | `"Authentication required"`      |
+| `403`  | Not a CLIENT role                               | `"Access denied"`                |
+| `403`  | Client is not a member of this store            | `"Access denied"`                |
+| `404`  | Store ID not found                              | `"Store not found with id: 99"`  |
 
 ---
 
-### 7.9 Client — Monthly Reports
+### 7.10 Client — Monthly Reports
 
 ---
 
 #### `GET /api/v1/client/monthly-reports/store/{storeId}`
 
-**Purpose:** Retrieve all monthly reports for a specific store, enforcing that the store belongs to the authenticated client.  
+**Purpose:** Retrieve all monthly reports for a specific store. Access is granted only if the authenticated client is a member (OWNER or PARTNER) of the store.  
 **Auth Required:** ✅ CLIENT  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -1945,7 +2239,7 @@ No request body or query parameters. The client identity is extracted from the J
       "monthlyReportId": 1,
       "storeId": 1,
       "storeName": "Walmart Downtown",
-      "reportMonth": 5,
+      "reportMonth": 6,
       "reportYear": 2026,
       "departmentId": 1,
       "departmentName": "Grocery",
@@ -1957,36 +2251,36 @@ No request body or query parameters. The client identity is extracted from the J
       "netSales": 41500.00
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                                        | Example `message`                       |
-|--------|-------------------------------------------------|-----------------------------------------|
-| `401`  | Missing / invalid JWT                           | `"Authentication required"`             |
-| `403`  | Not a CLIENT role                               | `"Access denied"`                       |
-| `403`  | Store does not belong to this client            | `"Access denied"`                       |
-| `404`  | Store ID not found                              | `"Store not found with id: 99"`         |
+| Status | Scenario                                        | `message`                        |
+|--------|-------------------------------------------------|----------------------------------|
+| `401`  | Missing / invalid JWT                           | `"Authentication required"`      |
+| `403`  | Not a CLIENT role                               | `"Access denied"`                |
+| `403`  | Client is not a member of this store            | `"Access denied"`                |
+| `404`  | Store ID not found                              | `"Store not found with id: 99"`  |
 
 ---
 
-### 7.10 Client — Yearly Reports
+### 7.11 Client — Yearly Reports
 
 ---
 
 #### `GET /api/v1/client/yearly-reports/store/{storeId}`
 
-**Purpose:** Retrieve all yearly reports for a specific store, enforcing that the store belongs to the authenticated client.  
+**Purpose:** Retrieve all yearly reports for a specific store. Access is granted only if the authenticated client is a member (OWNER or PARTNER) of the store.  
 **Auth Required:** ✅ CLIENT  
 **HTTP Status (success):** `200 OK`
 
-##### Path Variable
+##### Path Parameters
 
-| Name      | Type   | Description         |
-|-----------|--------|---------------------|
-| `storeId` | `Long` | Store's primary key |
+| Name      | Type   | Required | Description          |
+|-----------|--------|----------|----------------------|
+| `storeId` | `Long` | ✅        | Store's primary key  |
 
 ##### Success Response — `200 OK`
 
@@ -2003,18 +2297,18 @@ No request body or query parameters. The client identity is extracted from the J
       "annualSummary": "Excellent yearly sales growth of 18% over prior year."
     }
   ],
-  "timestamp": "2026-06-03T18:20:00.000Z"
+  "timestamp": "2026-06-06T10:00:00.000Z"
 }
 ```
 
 ##### Error Responses
 
-| Status | Scenario                                        | Example `message`                       |
-|--------|-------------------------------------------------|-----------------------------------------|
-| `401`  | Missing / invalid JWT                           | `"Authentication required"`             |
-| `403`  | Not a CLIENT role                               | `"Access denied"`                       |
-| `403`  | Store does not belong to this client            | `"Access denied"`                       |
-| `404`  | Store ID not found                              | `"Store not found with id: 99"`         |
+| Status | Scenario                                        | `message`                        |
+|--------|-------------------------------------------------|----------------------------------|
+| `401`  | Missing / invalid JWT                           | `"Authentication required"`      |
+| `403`  | Not a CLIENT role                               | `"Access denied"`                |
+| `403`  | Client is not a member of this store            | `"Access denied"`                |
+| `404`  | Store ID not found                              | `"Store not found with id: 99"`  |
 
 ---
 
@@ -2022,88 +2316,99 @@ No request body or query parameters. The client identity is extracted from the J
 
 ### 8.1 Security
 
-| ID     | Requirement                                                                 |
-|--------|-----------------------------------------------------------------------------|
-| NFR-1  | All protected endpoints must enforce JWT-based authentication               |
-| NFR-2  | Role-based authorization: `ADMIN` for `/admin/**`, `CLIENT` for `/client/**` |
-| NFR-3  | Passwords must be stored as bcrypt hashes; never exposed in responses       |
-| NFR-4  | The service must be fully stateless — no server-side HTTP sessions           |
-| NFR-5  | JWT secret must be externalized and not hard-coded                          |
+| ID    | Requirement                                                                    |
+|-------|--------------------------------------------------------------------------------|
+| NFR-1 | All protected endpoints must enforce JWT-based authentication                  |
+| NFR-2 | Role-based authorization: `ADMIN` for `/admin/**`, `CLIENT` for `/client/**`   |
+| NFR-3 | Passwords must be stored as bcrypt hashes; never exposed in responses          |
+| NFR-4 | The service must be fully stateless — no server-side HTTP sessions             |
+| NFR-5 | JWT secret must be externalized and not hard-coded                             |
 
 ### 8.2 Validation & Error Handling
 
-| ID     | Requirement                                                                      |
-|--------|----------------------------------------------------------------------------------|
-| NFR-6  | All request bodies must be validated before processing (`@Valid`)                |
-| NFR-7  | Validation errors must return `400` with a field-level error map in the envelope |
-| NFR-8  | All exceptions must be mapped to consistent HTTP status codes                   |
+| ID    | Requirement                                                                         |
+|-------|-------------------------------------------------------------------------------------|
+| NFR-6 | All request bodies must be validated before processing (`@Valid`)                   |
+| NFR-7 | Validation errors must return `400` with a field-level error map in the envelope    |
+| NFR-8 | All exceptions must be mapped to consistent HTTP status codes                       |
 
 ### 8.3 Response Consistency
 
-| ID     | Requirement                                                                 |
-|--------|-----------------------------------------------------------------------------|
-| NFR-9  | Every response must use the standard `ApiResponse<T>` envelope              |
-| NFR-10 | `null` fields must be omitted from JSON (via `@JsonInclude(NON_NULL)`)      |
+| ID     | Requirement                                                                  |
+|--------|------------------------------------------------------------------------------|
+| NFR-9  | Every response must use the standard `ApiResponse<T>` envelope               |
+| NFR-10 | `null` fields must be omitted from JSON (via `@JsonInclude(NON_NULL)`)       |
 
 ### 8.4 Portability & Maintainability
 
-| ID      | Requirement                                                               |
-|---------|---------------------------------------------------------------------------|
-| NFR-11  | Must run locally with embedded H2 database without external dependencies  |
-| NFR-12  | Must support MySQL via application configuration switch                   |
-| NFR-13  | Swagger/OpenAPI documentation must be available at runtime                |
+| ID     | Requirement                                                                |
+|--------|----------------------------------------------------------------------------|
+| NFR-11 | Must run locally with embedded H2 database without external dependencies   |
+| NFR-12 | Must support PostgreSQL via application configuration switch               |
+| NFR-13 | Swagger/OpenAPI documentation must be available at runtime                 |
 
 ---
 
 ## 9. Business Rules
 
-| ID   | Rule                                                                                              |
-|------|---------------------------------------------------------------------------------------------------|
-| BR-1 | A client may own multiple stores                                                                  |
-| BR-2 | A store belongs to exactly one client                                                             |
-| BR-3 | A store may have multiple daily, monthly, and yearly reports                                      |
-| BR-4 | CLIENT users may only access stores and reports that belong to their own account                  |
-| BR-5 | ADMIN users may access and manage all data regardless of client ownership                         |
-| BR-6 | Store `status` is limited to `ACTIVE` or `INACTIVE`                                              |
-| BR-7 | Client `status` is limited to `ACTIVE` or `INACTIVE`                                             |
-| BR-8 | Client email addresses must be unique across all client accounts                                  |
-| BR-9 | Store codes must be unique across all stores                                                      |
-| BR-10| The monthly report upload endpoint deletes all existing reports for the given store/month/year before inserting new rows |
-| BR-11| Report records must always reference an existing, persisted store                                 |
+| ID    | Rule                                                                                                                     |
+|-------|--------------------------------------------------------------------------------------------------------------------------|
+| BR-1  | Every store has exactly one OWNER client, enforced by a DB-level partial unique index on `store_id WHERE role = 'OWNER'`|
+| BR-2  | A store can have zero or more PARTNER clients                                                                            |
+| BR-3  | A client can be the OWNER of multiple stores                                                                             |
+| BR-4  | A client can be a PARTNER in multiple stores                                                                             |
+| BR-5  | A client can simultaneously be the OWNER of one store and a PARTNER in another                                           |
+| BR-6  | Both OWNER and PARTNER clients can access store reports (daily, monthly, yearly)                                         |
+| BR-7  | The OWNER of a store cannot be removed via the members endpoint; OWNER can only be changed via `PUT /admin/stores/{id}` |
+| BR-8  | A store can have multiple daily, monthly, and yearly reports                                                             |
+| BR-9  | CLIENT users can only access stores and reports where they have a mapping in `CLIENT_STORE_MAPPING`                      |
+| BR-10 | ADMIN users can access and manage all data regardless of client ownership                                                |
+| BR-11 | Store `status` is limited to `ACTIVE` or `INACTIVE`                                                                     |
+| BR-12 | Client `status` is limited to `ACTIVE` or `INACTIVE`                                                                    |
+| BR-13 | Client email addresses must be unique across all client accounts                                                         |
+| BR-14 | Store codes must be unique across all stores                                                                             |
+| BR-15 | The monthly report upload endpoint deletes all existing reports for the given store/month/year before inserting new rows |
+| BR-16 | Report records must always reference an existing, persisted store                                                        |
+| BR-17 | Monthly report Excel filename must match `monthly_<month>_<year>.xlsx` and values must match the request parameters      |
 
 ---
 
 ## Appendix A — Endpoint Quick Reference
 
-| # | Method   | Path                                                  | Role    | Description                         |
-|---|----------|-------------------------------------------------------|---------|-------------------------------------|
-| 1 | `POST`   | `/api/v1/auth/login`                                  | Public  | Login and get JWT token             |
-| 2 | `POST`   | `/api/v1/admin/clients`                               | ADMIN   | Create client                       |
-| 3 | `GET`    | `/api/v1/admin/clients`                               | ADMIN   | Get all clients                     |
-| 4 | `PUT`    | `/api/v1/admin/clients/{id}`                          | ADMIN   | Update client                       |
-| 5 | `POST`   | `/api/v1/admin/stores`                                | ADMIN   | Create store                        |
-| 6 | `GET`    | `/api/v1/admin/stores`                                | ADMIN   | Get all stores (filterable)         |
-| 7 | `GET`    | `/api/v1/admin/stores/{storeId}`                      | ADMIN   | Get store by ID                     |
-| 8 | `PUT`    | `/api/v1/admin/stores/{storeId}`                      | ADMIN   | Update store                        |
-| 9 | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`               | ADMIN   | Toggle store status                 |
-|10 | `POST`   | `/api/v1/admin/daily-reports`                         | ADMIN   | Create daily report                 |
-|11 | `GET`    | `/api/v1/admin/daily-reports`                         | ADMIN   | Get daily reports (filterable)      |
-|12 | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`         | ADMIN   | Get daily reports by store          |
-|13 | `PUT`    | `/api/v1/admin/daily-reports/{dailyReportId}`         | ADMIN   | Update daily report                 |
-|14 | `POST`   | `/api/v1/admin/monthly-reports`                       | ADMIN   | Create monthly report               |
-|15 | `GET`    | `/api/v1/admin/monthly-reports`                       | ADMIN   | Get monthly reports (filterable)    |
-|16 | `GET`    | `/api/v1/admin/monthly-reports/store/{storeId}`       | ADMIN   | Get monthly reports by store        |
-|17 | `PUT`    | `/api/v1/admin/monthly-reports/{monthlyReportId}`     | ADMIN   | Update monthly report               |
-|18 | `POST`   | `/api/v1/admin/monthly-reports/upload`                | ADMIN   | Bulk upload monthly reports (Excel) |
-|19 | `POST`   | `/api/v1/admin/yearly-reports`                        | ADMIN   | Create yearly report                |
-|20 | `GET`    | `/api/v1/admin/yearly-reports`                        | ADMIN   | Get yearly reports (filterable)     |
-|21 | `GET`    | `/api/v1/admin/yearly-reports/store/{storeId}`        | ADMIN   | Get yearly reports by store         |
-|22 | `PUT`    | `/api/v1/admin/yearly-reports/{yearlyReportId}`       | ADMIN   | Update yearly report                |
-|23 | `GET`    | `/api/v1/client/stores`                               | CLIENT  | Get own stores                      |
-|24 | `GET`    | `/api/v1/client/daily-reports/store/{storeId}`        | CLIENT  | Get own store's daily reports       |
-|25 | `GET`    | `/api/v1/client/monthly-reports/store/{storeId}`      | CLIENT  | Get own store's monthly reports     |
-|26 | `GET`    | `/api/v1/client/yearly-reports/store/{storeId}`       | CLIENT  | Get own store's yearly reports      |
+| #  | Method   | Path                                                        | Role    | Description                             |
+|----|----------|-------------------------------------------------------------|---------|-----------------------------------------|
+| 1  | `POST`   | `/api/v1/auth/login`                                        | Public  | Login and issue JWT cookies             |
+| 2  | `POST`   | `/api/v1/auth/refresh`                                      | Public  | Rotate refresh token, issue new access  |
+| 3  | `POST`   | `/api/v1/auth/logout`                                       | Public  | Revoke refresh token, clear cookies     |
+| 4  | `POST`   | `/api/v1/admin/clients`                                     | ADMIN   | Create client                           |
+| 5  | `GET`    | `/api/v1/admin/clients`                                     | ADMIN   | Get all clients                         |
+| 6  | `PUT`    | `/api/v1/admin/clients/{id}`                                | ADMIN   | Update client                           |
+| 7  | `POST`   | `/api/v1/admin/stores`                                      | ADMIN   | Create store (assigns OWNER)            |
+| 8  | `GET`    | `/api/v1/admin/stores`                                      | ADMIN   | Get all stores (filterable)             |
+| 9  | `GET`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Get store by ID                         |
+| 10 | `PUT`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Update store (optionally reassign OWNER)|
+| 11 | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`                     | ADMIN   | Toggle store status                     |
+| 12 | `GET`    | `/api/v1/admin/stores/{storeId}/members`                    | ADMIN   | List store members (OWNER + PARTNERs)   |
+| 13 | `POST`   | `/api/v1/admin/stores/{storeId}/members`                    | ADMIN   | Add PARTNER to store                    |
+| 14 | `DELETE` | `/api/v1/admin/stores/{storeId}/members/{clientId}`         | ADMIN   | Remove PARTNER from store               |
+| 15 | `POST`   | `/api/v1/admin/daily-reports`                               | ADMIN   | Create daily report                     |
+| 16 | `GET`    | `/api/v1/admin/daily-reports`                               | ADMIN   | Get daily reports (filterable)          |
+| 17 | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`               | ADMIN   | Get daily reports by store              |
+| 18 | `PUT`    | `/api/v1/admin/daily-reports/{dailyReportId}`               | ADMIN   | Update daily report                     |
+| 19 | `POST`   | `/api/v1/admin/monthly-reports`                             | ADMIN   | Create monthly report                   |
+| 20 | `GET`    | `/api/v1/admin/monthly-reports`                             | ADMIN   | Get monthly reports (filterable)        |
+| 21 | `GET`    | `/api/v1/admin/monthly-reports/store/{storeId}`             | ADMIN   | Get monthly reports by store            |
+| 22 | `PUT`    | `/api/v1/admin/monthly-reports/{monthlyReportId}`           | ADMIN   | Update monthly report                   |
+| 23 | `POST`   | `/api/v1/admin/monthly-reports/upload`                      | ADMIN   | Bulk upload monthly reports (Excel)     |
+| 24 | `POST`   | `/api/v1/admin/yearly-reports`                              | ADMIN   | Create yearly report                    |
+| 25 | `GET`    | `/api/v1/admin/yearly-reports`                              | ADMIN   | Get yearly reports (filterable)         |
+| 26 | `GET`    | `/api/v1/admin/yearly-reports/store/{storeId}`              | ADMIN   | Get yearly reports by store             |
+| 27 | `PUT`    | `/api/v1/admin/yearly-reports/{yearlyReportId}`             | ADMIN   | Update yearly report                    |
+| 28 | `GET`    | `/api/v1/client/stores`                                     | CLIENT  | Get own stores with role tag            |
+| 29 | `GET`    | `/api/v1/client/daily-reports/store/{storeId}`              | CLIENT  | Get store's daily reports               |
+| 30 | `GET`    | `/api/v1/client/monthly-reports/store/{storeId}`            | CLIENT  | Get store's monthly reports             |
+| 31 | `GET`    | `/api/v1/client/yearly-reports/store/{storeId}`             | CLIENT  | Get store's yearly reports              |
 
 ---
 
-*End of SRS — Hands Of Retail Backend API v1.0*
+*End of SRS — Hands Of Retail Backend API v2.0*
