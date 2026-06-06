@@ -21,7 +21,7 @@ public class ClientStoreController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<StoreResponse>>> getMyStores() {
         Long clientId = customUserDetailsService.getCurrentClient().getClientId();
-        List<StoreResponse> response = storeService.getStoresByClientId(clientId);
+        List<StoreResponse> response = storeService.getMyStores(clientId);
 
         return ResponseEntity.ok(
                 ApiResponse.success("Stores fetched", response));

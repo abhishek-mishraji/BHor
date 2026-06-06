@@ -9,6 +9,7 @@ import com.handsofretail.hor.entity.Store;
 import com.handsofretail.hor.exception.ForbiddenException;
 import com.handsofretail.hor.exception.ResourceNotFoundException;
 import com.handsofretail.hor.mapper.DailyReportMapper;
+import com.handsofretail.hor.repository.ClientStoreMappingRepository;
 import com.handsofretail.hor.repository.DailyReportRepository;
 import com.handsofretail.hor.repository.StoreRepository;
 import com.handsofretail.hor.service.DailyReportService;
@@ -29,6 +30,8 @@ public class DailyReportServiceImpl
         private final DailyReportRepository dailyReportRepository;
 
         private final StoreRepository storeRepository;
+
+        private final ClientStoreMappingRepository clientStoreMappingRepository;
 
         @Override
         public List<DailyReportResponse> getDailyReportsByStore(Long storeId) {
@@ -56,6 +59,10 @@ public class DailyReportServiceImpl
                                 .cashDeposit(request.getCashDeposit())
                                 .checkDeposit(request.getCheckDeposit())
                                 .overShort(request.getOverShort())
+                                .noSale(request.getNoSale())
+                                .lineVoid(request.getLineVoid())
+                                .voidAmount(request.getVoidAmount())
+                                .refunds(request.getRefunds())
                                 .build();
 
                 DailyReport savedReport = dailyReportRepository
@@ -73,7 +80,7 @@ public class DailyReportServiceImpl
                                 .findById(storeId)
                                 .orElseThrow(() -> new ResourceNotFoundException("Store not found"));
 
-                if (!store.getClient().getClientId().equals(clientId)) {
+                if (!clientStoreMappingRepository.existsByIdClientIdAndIdStoreId(clientId, storeId)) {
                         throw new ForbiddenException("Access denied");
                 }
 
@@ -147,6 +154,22 @@ public class DailyReportServiceImpl
 
                 if (request.getOverShort() != null) {
                         report.setOverShort(request.getOverShort());
+                }
+
+                if (request.getNoSale() != null) {
+                        report.setNoSale(request.getNoSale());
+                }
+
+                if (request.getLineVoid() != null) {
+                        report.setLineVoid(request.getLineVoid());
+                }
+
+                if (request.getVoidAmount() != null) {
+                        report.setVoidAmount(request.getVoidAmount());
+                }
+
+                if (request.getRefunds() != null) {
+                        report.setRefunds(request.getRefunds());
                 }
 
                 DailyReport saved = dailyReportRepository.save(report);

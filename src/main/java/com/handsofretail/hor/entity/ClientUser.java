@@ -49,6 +49,6 @@ public class ClientUser extends BaseEntity {
     private UserRole role = UserRole.CLIENT;
 
     @Builder.Default
-    @OneToMany(mappedBy = "client", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Store> stores = new ArrayList<>();
+    @OneToMany(mappedBy = "client", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<ClientStoreMapping> storeMappings = new ArrayList<>();
 }

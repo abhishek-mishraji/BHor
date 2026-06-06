@@ -19,6 +19,10 @@ public final class DailyReportMapper {
                 .cashDeposit(report.getCashDeposit())
                 .checkDeposit(report.getCheckDeposit())
                 .overShort(report.getOverShort())
+                .noSale(report.getNoSale())
+                .lineVoid(report.getLineVoid())
+                .voidAmount(report.getVoidAmount())
+                .refunds(report.getRefunds())
                 .build();
     }
 }

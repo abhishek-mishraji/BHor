@@ -10,6 +10,7 @@ import com.handsofretail.hor.exception.BadRequestException;
 import com.handsofretail.hor.exception.ForbiddenException;
 import com.handsofretail.hor.exception.ResourceNotFoundException;
 import com.handsofretail.hor.mapper.MonthlyReportMapper;
+import com.handsofretail.hor.repository.ClientStoreMappingRepository;
 import com.handsofretail.hor.repository.MonthlyReportRepository;
 import com.handsofretail.hor.repository.StoreRepository;
 import com.handsofretail.hor.service.MonthlyReportService;
@@ -42,6 +43,7 @@ public class MonthlyReportServiceImpl
 
         private final MonthlyReportRepository monthlyReportRepository;
         private final StoreRepository storeRepository;
+        private final ClientStoreMappingRepository clientStoreMappingRepository;
         private static final DataFormatter DATA_FORMATTER = new DataFormatter();
 
         @Override
@@ -91,7 +93,7 @@ public class MonthlyReportServiceImpl
                                 .findById(storeId)
                                 .orElseThrow(() -> new ResourceNotFoundException("Store not found"));
 
-                if (!store.getClient().getClientId().equals(clientId)) {
+                if (!clientStoreMappingRepository.existsByIdClientIdAndIdStoreId(clientId, storeId)) {
                         throw new ForbiddenException("Access denied");
                 }
 

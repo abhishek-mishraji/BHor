@@ -22,10 +22,6 @@ public class Store extends BaseEntity {
     @Column(name = "store_id")
     private Long storeId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "client_id", nullable = false)
-    private ClientUser client;
-
     @Column(name = "store_name", nullable = false)
     private String storeName;
 
@@ -42,6 +38,10 @@ public class Store extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Status status = Status.ACTIVE;
+
+    @Builder.Default
+    @OneToMany(mappedBy = "store", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<ClientStoreMapping> mappings = new ArrayList<>();
 
     @Builder.Default
     @OneToMany(mappedBy = "store", cascade = CascadeType.ALL, orphanRemoval = true)

@@ -9,6 +9,7 @@ import com.handsofretail.hor.entity.YearlyReport;
 import com.handsofretail.hor.exception.ForbiddenException;
 import com.handsofretail.hor.exception.ResourceNotFoundException;
 import com.handsofretail.hor.mapper.YearlyReportMapper;
+import com.handsofretail.hor.repository.ClientStoreMappingRepository;
 import com.handsofretail.hor.repository.StoreRepository;
 import com.handsofretail.hor.repository.YearlyReportRepository;
 import com.handsofretail.hor.service.YearlyReportService;
@@ -28,6 +29,8 @@ public class YearlyReportServiceImpl
         private final YearlyReportRepository yearlyReportRepository;
 
         private final StoreRepository storeRepository;
+
+        private final ClientStoreMappingRepository clientStoreMappingRepository;
 
         @Override
         public List<YearlyReportResponse> getYearlyReportsByStore(Long storeId) {
@@ -68,7 +71,7 @@ public class YearlyReportServiceImpl
                                 .findById(storeId)
                                 .orElseThrow(() -> new ResourceNotFoundException("Store not found"));
 
-                if (!store.getClient().getClientId().equals(clientId)) {
+                if (!clientStoreMappingRepository.existsByIdClientIdAndIdStoreId(clientId, storeId)) {
                         throw new ForbiddenException("Access denied");
                 }
 

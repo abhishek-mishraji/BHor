@@ -41,4 +41,16 @@ public class DailyReport extends BaseEntity {
     private BigDecimal checkDeposit;
     @Column(name = "over_short", precision = 15, scale = 2)
     private BigDecimal overShort;
+
+    @Column(name = "no_sale", precision = 15, scale = 2)
+    private BigDecimal noSale;
+
+    @Column(name = "line_void", precision = 15, scale = 2)
+    private BigDecimal lineVoid;
+
+    @Column(name = "void_amount", precision = 15, scale = 2)
+    private BigDecimal voidAmount;
+
+    @Column(name = "refunds", precision = 15, scale = 2)
+    private BigDecimal refunds;
 }

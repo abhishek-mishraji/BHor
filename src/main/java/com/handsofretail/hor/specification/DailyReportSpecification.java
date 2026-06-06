@@ -1,6 +1,7 @@
 package com.handsofretail.hor.specification;
 
 import com.handsofretail.hor.entity.DailyReport;
+import jakarta.persistence.criteria.JoinType;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.time.LocalDate;
@@ -15,7 +16,12 @@ public final class DailyReportSpecification {
     }
 
     public static Specification<DailyReport> hasClientId(Long clientId) {
-        return (root, query, cb) -> cb.equal(root.get("store").get("client").get("clientId"), clientId);
+        return (root, query, cb) -> {
+            query.distinct(true);
+            var store = root.join("store", JoinType.INNER);
+            var mappings = store.join("mappings", JoinType.INNER);
+            return cb.equal(mappings.get("id").get("clientId"), clientId);
+        };
     }
 
     public static Specification<DailyReport> reportDateBetween(LocalDate from, LocalDate to) {

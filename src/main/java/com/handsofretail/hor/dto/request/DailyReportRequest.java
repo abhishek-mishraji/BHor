@@ -26,4 +26,12 @@ public class DailyReportRequest {
     private BigDecimal checkDeposit;
 
     private BigDecimal overShort;
+
+    private BigDecimal noSale;
+
+    private BigDecimal lineVoid;
+
+    private BigDecimal voidAmount;
+
+    private BigDecimal refunds;
 }
