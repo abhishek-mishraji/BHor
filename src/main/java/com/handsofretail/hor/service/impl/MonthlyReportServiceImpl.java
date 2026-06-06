@@ -224,9 +224,7 @@ public class MonthlyReportServiceImpl
                 }
 
                 String originalFilename = file.getOriginalFilename();
-                if (originalFilename == null || !originalFilename.toLowerCase(Locale.ROOT).endsWith(".xlsx")) {
-                        throw new BadRequestException("Only .xlsx Excel files are accepted");
-                }
+                validateFilename(originalFilename, reportMonth, reportYear);
 
                 Store store = storeRepository
                                 .findById(storeId)
@@ -300,6 +298,27 @@ public class MonthlyReportServiceImpl
                                 .insertedRows(reports.size())
                                 .deletedRows(deletedRows)
                                 .build();
+        }
+
+        private static void validateFilename(String filename, Integer reportMonth, Integer reportYear) {
+                if (filename == null) {
+                        throw new BadRequestException("Uploaded file name is missing");
+                }
+                java.util.regex.Matcher matcher = java.util.regex.Pattern
+                                .compile("^monthly_(\\d{1,2})_(\\d{4})\\.xlsx$")
+                                .matcher(filename);
+                if (!matcher.matches()) {
+                        throw new BadRequestException(
+                                        "Uploaded file name does not match report month and year. Expected: monthly_"
+                                                        + reportMonth + "_" + reportYear + ".xlsx");
+                }
+                int fileMonth = Integer.parseInt(matcher.group(1));
+                int fileYear = Integer.parseInt(matcher.group(2));
+                if (fileMonth != reportMonth || fileYear != reportYear) {
+                        throw new BadRequestException(
+                                        "Uploaded file name does not match report month and year. Expected: monthly_"
+                                                        + reportMonth + "_" + reportYear + ".xlsx");
+                }
         }
 
         private static void validateHeaderRow(Row headerRow) {
