@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS monthly_reports (
   store_id          BIGINT       NOT NULL,
   report_month      INTEGER      NOT NULL,
   report_year       INTEGER      NOT NULL,
-  department_id     INTEGER,
+  department_id     VARCHAR(50),
   department_name   VARCHAR(255),
   gross             NUMERIC(15,2),
   discount          NUMERIC(15,2),

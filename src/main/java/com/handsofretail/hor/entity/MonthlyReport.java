@@ -31,7 +31,7 @@ public class MonthlyReport extends BaseEntity {
     private Integer reportYear;
 
     @Column(name = "department_id")
-    private Integer departmentId;
+    private String departmentId;
 
     @Column(name = "department_name")
     private String departmentName;

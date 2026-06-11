@@ -1,5 +1,5 @@
 package com.handsofretail.hor.enums;
 
-public class ReportType {
-
+public enum ReportType {
+    DAILY, MONTHLY
 }

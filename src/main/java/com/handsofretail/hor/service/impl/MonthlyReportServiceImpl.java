@@ -254,7 +254,7 @@ public class MonthlyReportServiceImpl
                                 }
 
                                 String department = getRequiredString(row.getCell(0), rowIndex, "Department");
-                                Integer deptId = getRequiredInteger(row.getCell(1), rowIndex, "Dept ID");
+                                String deptId = getRequiredString(row.getCell(1), rowIndex, "Dept ID");
                                 BigDecimal gross = getRequiredDecimal(row.getCell(2), rowIndex, "Gross");
                                 BigDecimal discount = getRequiredDecimal(row.getCell(3), rowIndex, "Discount");
                                 BigDecimal promotion = getRequiredDecimal(row.getCell(4), rowIndex, "Promotion");

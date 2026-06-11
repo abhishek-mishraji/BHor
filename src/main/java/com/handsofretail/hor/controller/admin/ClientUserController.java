@@ -1,5 +1,6 @@
 package com.handsofretail.hor.controller.admin;
 
+import com.handsofretail.hor.dto.request.ClientStatusRequest;
 import com.handsofretail.hor.dto.request.ClientUserRequest;
 import com.handsofretail.hor.dto.request.ClientUserUpdateRequest;
 import com.handsofretail.hor.dto.response.ApiResponse;
@@ -55,6 +56,20 @@ public class ClientUserController {
 
         ClientUserResponse response = clientUserService.updateClient(id, request);
         return ResponseEntity.ok(ApiResponse.success("Client updated", response));
+    }
+
+    @PatchMapping("/{id}/status")
+    @Operation(summary = "Update client status", description = "Activate or deactivate a client account.")
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Status updated"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Client not found")
+    })
+    public ResponseEntity<ApiResponse<ClientUserResponse>> updateClientStatus(
+            @PathVariable Long id,
+            @Valid @RequestBody ClientStatusRequest request) {
+
+        ClientUserResponse response = clientUserService.updateClientStatus(id, request);
+        return ResponseEntity.ok(ApiResponse.success("Client status updated", response));
     }
 
 }

@@ -21,7 +21,7 @@ public class MonthlyReportResponse {
 
     private Integer reportYear;
 
-    private Integer departmentId;
+    private String departmentId;
 
     private String departmentName;
 

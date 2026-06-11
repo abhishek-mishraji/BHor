@@ -1,7 +1,7 @@
 # Software Requirements Specification — Hands Of Retail Backend API
 
-**Version:** 2.1  
-**Date:** 2026-06-07  
+**Version:** 2.2  
+**Date:** 2026-06-11  
 **Base URL:** `http://localhost:8080`  
 **Content-Type:** `application/json` (unless noted otherwise)  
 **Auth Scheme:** HttpOnly Cookies (`access_token` + `refresh_token`)
@@ -336,7 +336,7 @@ erDiagram
         Long store_id FK
         Integer report_month
         Integer report_year
-        Integer department_id
+        String department_id
         String department_name
         BigDecimal gross
         BigDecimal discount
@@ -716,6 +716,66 @@ None.
 | `403`  | Not an ADMIN                 | `"Access denied"`                          |
 | `404`  | Client ID does not exist     | `"Client not found with id: 99"`           |
 | `409`  | New email already in use     | `"Email already in use: other@gmail.com"`  |
+
+---
+
+#### `PATCH /api/v1/admin/clients/{id}/status`
+
+**Purpose:** Activate or deactivate a client account without changing other fields.  
+**Auth Required:** ✅ ADMIN  
+**HTTP Status (success):** `200 OK`
+
+##### Path Parameters
+
+| Name | Type   | Required | Description             |
+|------|--------|----------|-------------------------|
+| `id` | `Long` | ✅        | Client's primary key ID |
+
+##### Request Headers
+
+| Header         | Value              |
+|----------------|--------------------|
+| `Content-Type` | `application/json` |
+
+##### Request Body
+
+| Field    | Type     | Required | Validation                          |
+|----------|----------|----------|-------------------------------------|
+| `status` | `string` | ✅        | Must not be null; `ACTIVE` or `INACTIVE` |
+
+```json
+{
+  "status": "INACTIVE"
+}
+```
+
+##### Success Response — `200 OK`
+
+```json
+{
+  "success": true,
+  "message": "Client status updated",
+  "data": {
+    "clientId": 1,
+    "fullName": "John Doe",
+    "email": "john@gmail.com",
+    "phoneNumber": "9876543210",
+    "address": "New York",
+    "status": "INACTIVE",
+    "role": "CLIENT"
+  },
+  "timestamp": "2026-06-11T10:00:00.000Z"
+}
+```
+
+##### Error Responses
+
+| Status | Scenario                    | `message`                        |
+|--------|-----------------------------|----------------------------------|
+| `400`  | Missing or invalid `status` | `"Validation failed"` + `errors` map |
+| `401`  | Missing / invalid JWT       | `"Authentication required"`      |
+| `403`  | Not an ADMIN                | `"Access denied"`                |
+| `404`  | Client ID does not exist    | `"Client not found"`             |
 
 ---
 
@@ -1506,7 +1566,7 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-06-01&to=2026-06-30
 | `storeId`        | `Long`       | ✅        | Must not be null; store must exist |
 | `reportMonth`    | `integer`    | ✅        | Must not be null; 1–12             |
 | `reportYear`     | `integer`    | ✅        | Must not be null; e.g. `2026`      |
-| `departmentId`   | `integer`    | ❌        | Optional department identifier     |
+| `departmentId`   | `string`     | ❌        | Optional department identifier (e.g. `"A1"`, `"D12"`) |
 | `departmentName` | `string`     | ❌        | Optional department name           |
 | `gross`          | `number`     | ❌        | Decimal, optional                  |
 | `discount`       | `number`     | ❌        | Decimal, optional                  |
@@ -1520,7 +1580,7 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-06-01&to=2026-06-30
   "storeId": 1,
   "reportMonth": 6,
   "reportYear": 2026,
-  "departmentId": 1,
+  "departmentId": "A1",
   "departmentName": "Grocery",
   "gross": 50000.00,
   "discount": 5000.00,
@@ -1543,7 +1603,7 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-06-01&to=2026-06-30
     "storeName": "Walmart Downtown",
     "reportMonth": 6,
     "reportYear": 2026,
-    "departmentId": 1,
+    "departmentId": "A1",
     "departmentName": "Grocery",
     "gross": 50000.00,
     "discount": 5000.00,
@@ -1565,7 +1625,7 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-06-01&to=2026-06-30
 | `storeName`       | `string`     | Name of the associated store           |
 | `reportMonth`     | `integer`    | Month (1–12)                           |
 | `reportYear`      | `integer`    | Year (e.g. `2026`)                     |
-| `departmentId`    | `integer`    | Department identifier (nullable)       |
+| `departmentId`    | `string`     | Department identifier (nullable, e.g. `"A1"`, `"D12"`) |
 | `departmentName`  | `string`     | Department name (nullable)             |
 | `gross`           | `BigDecimal` | Gross sales (nullable)                 |
 | `discount`        | `BigDecimal` | Discount amount (nullable)             |
@@ -1618,7 +1678,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=6
       "storeName": "Walmart Downtown",
       "reportMonth": 6,
       "reportYear": 2026,
-      "departmentId": 1,
+      "departmentId": "A1",
       "departmentName": "Grocery",
       "gross": 50000.00,
       "discount": 5000.00,
@@ -1666,7 +1726,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=6
       "storeName": "Walmart Downtown",
       "reportMonth": 6,
       "reportYear": 2026,
-      "departmentId": 1,
+      "departmentId": "A1",
       "departmentName": "Grocery",
       "gross": 50000.00,
       "discount": 5000.00,
@@ -1715,7 +1775,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=6
 | `storeId`        | `Long`    | ❌        | If provided, store must exist           |
 | `reportMonth`    | `integer` | ❌        | Month (1–12)                            |
 | `reportYear`     | `integer` | ❌        | Year                                    |
-| `departmentId`   | `integer` | ❌        | Department identifier                   |
+| `departmentId`   | `string`  | ❌        | Department identifier (e.g. `"A1"`, `"D12"`) |
 | `departmentName` | `string`  | ❌        | Department name                         |
 | `gross`          | `number`  | ❌        | Decimal                                 |
 | `discount`       | `number`  | ❌        | Decimal                                 |
@@ -1726,7 +1786,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=6
 
 ```json
 {
-  "departmentId": 2,
+  "departmentId": "D12",
   "departmentName": "Electronics",
   "gross": 60000.00,
   "discount": 3000.00,
@@ -1746,7 +1806,7 @@ GET /api/v1/admin/monthly-reports?storeId=1&year=2026&month=6
     "storeName": "Walmart Downtown",
     "reportMonth": 6,
     "reportYear": 2026,
-    "departmentId": 2,
+    "departmentId": "D12",
     "departmentName": "Electronics",
     "gross": 60000.00,
     "discount": 3000.00,
@@ -1814,7 +1874,7 @@ Each data row (after the header row) represents one monthly report entry.
 | Column (0-based) | Name             | Type      | Required |
 |------------------|------------------|-----------|----------|
 | 0                | `department`     | `string`  | ✅        |
-| 1                | `dept id`        | `integer` | ✅        |
+| 1                | `dept id`        | `string`  | ✅        |
 | 2                | `gross`          | `decimal` | ✅        |
 | 3                | `discount`       | `decimal` | ✅        |
 | 4                | `promotion`      | `decimal` | ✅        |
@@ -2264,7 +2324,7 @@ No request body or query parameters. The client identity is extracted from the J
       "storeName": "Walmart Downtown",
       "reportMonth": 6,
       "reportYear": 2026,
-      "departmentId": 1,
+      "departmentId": "A1",
       "departmentName": "Grocery",
       "gross": 50000.00,
       "discount": 5000.00,
@@ -2406,32 +2466,33 @@ No request body or query parameters. The client identity is extracted from the J
 | 4  | `POST`   | `/api/v1/admin/clients`                                     | ADMIN   | Create client                           |
 | 5  | `GET`    | `/api/v1/admin/clients`                                     | ADMIN   | Get all clients                         |
 | 6  | `PUT`    | `/api/v1/admin/clients/{id}`                                | ADMIN   | Update client                           |
-| 7  | `POST`   | `/api/v1/admin/stores`                                      | ADMIN   | Create store (assigns OWNER)            |
-| 8  | `GET`    | `/api/v1/admin/stores`                                      | ADMIN   | Get all stores (filterable)             |
-| 9  | `GET`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Get store by ID                         |
-| 10 | `PUT`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Update store (optionally reassign OWNER)|
-| 11 | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`                     | ADMIN   | Toggle store status                     |
-| 12 | `GET`    | `/api/v1/admin/store-members?storeId={id}`                  | ADMIN   | List store members (OWNER + PARTNERs)   |
-| 13 | `POST`   | `/api/v1/admin/store-members`                               | ADMIN   | Add member to store (body has storeId)  |
-| 14 | `DELETE` | `/api/v1/admin/store-members/{storeId}/{clientId}`          | ADMIN   | Remove member from store                |
-| 15 | `POST`   | `/api/v1/admin/daily-reports`                               | ADMIN   | Create daily report                     |
-| 16 | `GET`    | `/api/v1/admin/daily-reports`                               | ADMIN   | Get daily reports (filterable)          |
-| 17 | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`               | ADMIN   | Get daily reports by store              |
-| 18 | `PUT`    | `/api/v1/admin/daily-reports/{dailyReportId}`               | ADMIN   | Update daily report                     |
-| 19 | `POST`   | `/api/v1/admin/monthly-reports`                             | ADMIN   | Create monthly report                   |
-| 20 | `GET`    | `/api/v1/admin/monthly-reports`                             | ADMIN   | Get monthly reports (filterable)        |
-| 21 | `GET`    | `/api/v1/admin/monthly-reports/store/{storeId}`             | ADMIN   | Get monthly reports by store            |
-| 22 | `PUT`    | `/api/v1/admin/monthly-reports/{monthlyReportId}`           | ADMIN   | Update monthly report                   |
-| 23 | `POST`   | `/api/v1/admin/monthly-reports/upload`                      | ADMIN   | Bulk upload monthly reports (Excel)     |
-| 24 | `POST`   | `/api/v1/admin/yearly-reports`                              | ADMIN   | Create yearly report                    |
-| 25 | `GET`    | `/api/v1/admin/yearly-reports`                              | ADMIN   | Get yearly reports (filterable)         |
-| 26 | `GET`    | `/api/v1/admin/yearly-reports/store/{storeId}`              | ADMIN   | Get yearly reports by store             |
-| 27 | `PUT`    | `/api/v1/admin/yearly-reports/{yearlyReportId}`             | ADMIN   | Update yearly report                    |
-| 28 | `GET`    | `/api/v1/client/stores`                                     | CLIENT  | Get own stores with role tag            |
-| 29 | `GET`    | `/api/v1/client/daily-reports/store/{storeId}`              | CLIENT  | Get store's daily reports               |
-| 30 | `GET`    | `/api/v1/client/monthly-reports/store/{storeId}`            | CLIENT  | Get store's monthly reports             |
-| 31 | `GET`    | `/api/v1/client/yearly-reports/store/{storeId}`             | CLIENT  | Get store's yearly reports              |
+| 7  | `PATCH`  | `/api/v1/admin/clients/{id}/status`                         | ADMIN   | Activate or deactivate client           |
+| 8  | `POST`   | `/api/v1/admin/stores`                                      | ADMIN   | Create store (assigns OWNER)            |
+| 9  | `GET`    | `/api/v1/admin/stores`                                      | ADMIN   | Get all stores (filterable)             |
+| 10 | `GET`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Get store by ID                         |
+| 11 | `PUT`    | `/api/v1/admin/stores/{storeId}`                            | ADMIN   | Update store (optionally reassign OWNER)|
+| 12 | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`                     | ADMIN   | Toggle store status                     |
+| 13 | `GET`    | `/api/v1/admin/store-members?storeId={id}`                  | ADMIN   | List store members (OWNER + PARTNERs)   |
+| 14 | `POST`   | `/api/v1/admin/store-members`                               | ADMIN   | Add member to store (body has storeId)  |
+| 15 | `DELETE` | `/api/v1/admin/store-members/{storeId}/{clientId}`          | ADMIN   | Remove member from store                |
+| 16 | `POST`   | `/api/v1/admin/daily-reports`                               | ADMIN   | Create daily report                     |
+| 17 | `GET`    | `/api/v1/admin/daily-reports`                               | ADMIN   | Get daily reports (filterable)          |
+| 18 | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`               | ADMIN   | Get daily reports by store              |
+| 19 | `PUT`    | `/api/v1/admin/daily-reports/{dailyReportId}`               | ADMIN   | Update daily report                     |
+| 20 | `POST`   | `/api/v1/admin/monthly-reports`                             | ADMIN   | Create monthly report                   |
+| 21 | `GET`    | `/api/v1/admin/monthly-reports`                             | ADMIN   | Get monthly reports (filterable)        |
+| 22 | `GET`    | `/api/v1/admin/monthly-reports/store/{storeId}`             | ADMIN   | Get monthly reports by store            |
+| 23 | `PUT`    | `/api/v1/admin/monthly-reports/{monthlyReportId}`           | ADMIN   | Update monthly report                   |
+| 24 | `POST`   | `/api/v1/admin/monthly-reports/upload`                      | ADMIN   | Bulk upload monthly reports (Excel)     |
+| 25 | `POST`   | `/api/v1/admin/yearly-reports`                              | ADMIN   | Create yearly report                    |
+| 26 | `GET`    | `/api/v1/admin/yearly-reports`                              | ADMIN   | Get yearly reports (filterable)         |
+| 27 | `GET`    | `/api/v1/admin/yearly-reports/store/{storeId}`              | ADMIN   | Get yearly reports by store             |
+| 28 | `PUT`    | `/api/v1/admin/yearly-reports/{yearlyReportId}`             | ADMIN   | Update yearly report                    |
+| 29 | `GET`    | `/api/v1/client/stores`                                     | CLIENT  | Get own stores with role tag            |
+| 30 | `GET`    | `/api/v1/client/daily-reports/store/{storeId}`              | CLIENT  | Get store's daily reports               |
+| 31 | `GET`    | `/api/v1/client/monthly-reports/store/{storeId}`            | CLIENT  | Get store's monthly reports             |
+| 32 | `GET`    | `/api/v1/client/yearly-reports/store/{storeId}`             | CLIENT  | Get store's yearly reports              |
 
 ---
 
-*End of SRS — Hands Of Retail Backend API v2.0*
+*End of SRS — Hands Of Retail Backend API v2.2*

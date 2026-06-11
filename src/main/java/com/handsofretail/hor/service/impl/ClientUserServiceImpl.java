@@ -1,5 +1,6 @@
 package com.handsofretail.hor.service.impl;
 
+import com.handsofretail.hor.dto.request.ClientStatusRequest;
 import com.handsofretail.hor.dto.request.ClientUserRequest;
 import com.handsofretail.hor.dto.request.ClientUserUpdateRequest;
 import com.handsofretail.hor.dto.response.ClientUserResponse;
@@ -90,6 +91,17 @@ public class ClientUserServiceImpl implements ClientUserService {
                 ClientUser updated = clientUserRepository.save(client);
 
                 return ClientUserMapper.toResponse(updated);
+        }
+
+        @Override
+        public ClientUserResponse updateClientStatus(Long id, ClientStatusRequest request) {
+
+                ClientUser client = clientUserRepository.findById(id)
+                                .orElseThrow(() -> new ResourceNotFoundException("Client not found"));
+
+                client.setStatus(request.getStatus());
+
+                return ClientUserMapper.toResponse(clientUserRepository.save(client));
         }
 
 }
