@@ -1,5 +1,5 @@
 package com.handsofretail.hor.enums;
 
 public enum GroupByField {
-    DATE, MONTH, YEAR, STORE, DEPARTMENT
+    DATE, MONTH, QUARTER, YEAR, STORE, DEPARTMENT
 }

@@ -43,7 +43,8 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     private static final Set<GroupByField> DAILY_GROUP_BY = Set.of(GroupByField.DATE, GroupByField.STORE);
 
     private static final Set<GroupByField> MONTHLY_GROUP_BY = Set.of(
-            GroupByField.MONTH, GroupByField.YEAR, GroupByField.STORE, GroupByField.DEPARTMENT
+            GroupByField.MONTH, GroupByField.QUARTER, GroupByField.YEAR,
+            GroupByField.STORE, GroupByField.DEPARTMENT
     );
 
     private static final Map<String, String> METRIC_LABELS = Map.ofEntries(
@@ -100,6 +101,9 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
         if (groupBy == GroupByField.MONTH && isNullOrEmpty(request.getYear())) {
             throw new BadRequestException("year is required when groupBy=MONTH");
+        }
+        if (groupBy == GroupByField.QUARTER && isNullOrEmpty(request.getYear())) {
+            throw new BadRequestException("year is required when groupBy=QUARTER");
         }
         if (groupBy == GroupByField.YEAR && isNullOrEmpty(request.getYear())) {
             throw new BadRequestException("year is required when groupBy=YEAR");
@@ -195,6 +199,15 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     // ─── Monthly Query ────────────────────────────────────────────────────────
 
     private AnalyticsResponse executeMonthlyAnalytics(AnalyticsRequest request) {
+        // Multiple years with groupBy=MONTH need (year, month) buckets — a plain
+        // reportMonth grouping would merge the same month of different years.
+        if (request.getGroupBy() == GroupByField.MONTH && request.getYear().size() > 1) {
+            return executeMultiYearMonthAnalytics(request);
+        }
+        if (request.getGroupBy() == GroupByField.QUARTER) {
+            return executeQuarterAnalytics(request);
+        }
+
         CriteriaBuilder cb = entityManager.getCriteriaBuilder();
         CriteriaQuery<Tuple> q = cb.createTupleQuery();
         Root<MonthlyReport> root = q.from(MonthlyReport.class);
@@ -241,6 +254,79 @@ public class AnalyticsServiceImpl implements AnalyticsService {
         return toResponse(tuples, request);
     }
 
+    private AnalyticsResponse executeMultiYearMonthAnalytics(AnalyticsRequest request) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> q = cb.createTupleQuery();
+        Root<MonthlyReport> root = q.from(MonthlyReport.class);
+        Join<MonthlyReport, Store> storeJoin = root.join("store", JoinType.LEFT);
+
+        Expression<Integer> yearExpr = root.get("reportYear");
+        Expression<Integer> monthExpr = root.get("reportMonth");
+
+        List<Selection<?>> selections = new ArrayList<>();
+        selections.add(yearExpr.alias("labelYear"));
+        selections.add(monthExpr.alias("labelMonth"));
+        for (String metric : request.getMetric()) {
+            Expression<BigDecimal> field = root.get(metric);
+            selections.add(applyAggregate(cb, field, request.getAggregate()).alias(metric));
+        }
+
+        List<Predicate> predicates = buildMonthlyPredicates(cb, root, storeJoin, request);
+
+        q.multiselect(selections)
+                .where(predicates.toArray(new Predicate[0]))
+                .groupBy(yearExpr, monthExpr)
+                .orderBy(cb.asc(yearExpr), cb.asc(monthExpr));
+
+        List<Tuple> tuples = entityManager.createQuery(q).getResultList();
+        return toResponse(tuples, request, t -> String.format("%d-%02d",
+                t.get("labelYear", Integer.class), t.get("labelMonth", Integer.class)));
+    }
+
+    private AnalyticsResponse executeQuarterAnalytics(AnalyticsRequest request) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> q = cb.createTupleQuery();
+        Root<MonthlyReport> root = q.from(MonthlyReport.class);
+        Join<MonthlyReport, Store> storeJoin = root.join("store", JoinType.LEFT);
+
+        // Quarter derived in SQL: FLOOR((report_month - 1) / 3) + 1
+        Expression<Integer> monthExpr = root.get("reportMonth");
+        Expression<Integer> quarterExpr = cb.sum(
+                cb.quot(cb.diff(monthExpr, 1), 3).as(Integer.class), 1);
+
+        boolean multiYear = request.getYear().size() > 1;
+        Expression<Integer> yearExpr = root.get("reportYear");
+
+        List<Selection<?>> selections = new ArrayList<>();
+        List<Expression<?>> groupByList = new ArrayList<>();
+        List<Order> orders = new ArrayList<>();
+        if (multiYear) {
+            selections.add(yearExpr.alias("labelYear"));
+            groupByList.add(yearExpr);
+            orders.add(cb.asc(yearExpr));
+        }
+        selections.add(quarterExpr.alias("labelQuarter"));
+        groupByList.add(quarterExpr);
+        orders.add(cb.asc(quarterExpr));
+
+        for (String metric : request.getMetric()) {
+            Expression<BigDecimal> field = root.get(metric);
+            selections.add(applyAggregate(cb, field, request.getAggregate()).alias(metric));
+        }
+
+        List<Predicate> predicates = buildMonthlyPredicates(cb, root, storeJoin, request);
+
+        q.multiselect(selections)
+                .where(predicates.toArray(new Predicate[0]))
+                .groupBy(groupByList)
+                .orderBy(orders);
+
+        List<Tuple> tuples = entityManager.createQuery(q).getResultList();
+        return toResponse(tuples, request, multiYear
+                ? t -> t.get("labelYear", Integer.class) + "-Q" + ((Number) t.get("labelQuarter")).intValue()
+                : t -> "Q" + ((Number) t.get("labelQuarter")).intValue());
+    }
+
     private List<Predicate> buildMonthlyPredicates(CriteriaBuilder cb, Root<MonthlyReport> root,
                                                      Join<MonthlyReport, Store> storeJoin,
                                                      AnalyticsRequest request) {
@@ -285,8 +371,13 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     }
 
     private AnalyticsResponse toResponse(List<Tuple> tuples, AnalyticsRequest request) {
+        return toResponse(tuples, request, t -> String.valueOf(t.get("label")));
+    }
+
+    private AnalyticsResponse toResponse(List<Tuple> tuples, AnalyticsRequest request,
+                                          java.util.function.Function<Tuple, String> labelMapper) {
         List<String> labels = tuples.stream()
-                .map(t -> String.valueOf(t.get("label")))
+                .map(labelMapper)
                 .toList();
 
         List<DatasetDto> datasets = request.getMetric().stream()

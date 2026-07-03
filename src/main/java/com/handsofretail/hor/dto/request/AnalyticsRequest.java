@@ -19,7 +19,7 @@ public class AnalyticsRequest {
     @NotNull(message = "reportType is required (DAILY or MONTHLY)")
     private ReportType reportType;
 
-    @NotNull(message = "groupBy is required (DATE, MONTH, YEAR, STORE, DEPARTMENT)")
+    @NotNull(message = "groupBy is required (DATE, MONTH, QUARTER, YEAR, STORE, DEPARTMENT)")
     private GroupByField groupBy;
 
     @NotEmpty(message = "At least one metric is required")
