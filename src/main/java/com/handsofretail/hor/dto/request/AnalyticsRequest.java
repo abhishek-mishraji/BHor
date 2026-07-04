@@ -27,7 +27,8 @@ public class AnalyticsRequest {
 
     private AggregateType aggregate = AggregateType.SUM;
 
-    // Admin-only scope filters (ignored on client endpoint)
+    // Scope filters. Admin: storeIds or clientId required (not both).
+    // Client: storeIds optionally narrows to a subset of own stores; clientId ignored.
     private List<Long> storeIds;
     private Long clientId;
 

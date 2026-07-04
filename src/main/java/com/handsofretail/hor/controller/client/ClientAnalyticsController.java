@@ -3,6 +3,7 @@ package com.handsofretail.hor.controller.client;
 import com.handsofretail.hor.dto.request.AnalyticsRequest;
 import com.handsofretail.hor.dto.response.AnalyticsResponse;
 import com.handsofretail.hor.dto.response.ApiResponse;
+import com.handsofretail.hor.exception.ForbiddenException;
 import com.handsofretail.hor.repository.ClientStoreMappingRepository;
 import com.handsofretail.hor.security.user.CustomUserDetailsService;
 import com.handsofretail.hor.service.AnalyticsService;
@@ -33,7 +34,9 @@ public class ClientAnalyticsController {
             description = """
                     Same analytics capabilities as the admin endpoint but automatically scoped
                     to stores the authenticated client is a member of (OWNER or PARTNER).
-                    storeIds and clientId params are ignored — access is derived from the JWT.
+                    storeIds may be passed to narrow the query to a subset of the client's own
+                    stores; requesting a store outside the client's mappings returns 403.
+                    clientId is ignored — access is always derived from the JWT.
                     """)
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Analytics fetched"),
@@ -44,15 +47,23 @@ public class ClientAnalyticsController {
     public ResponseEntity<ApiResponse<AnalyticsResponse>> getAnalytics(
             @Valid @ModelAttribute AnalyticsRequest request) {
 
-        // Override scope from JWT — client cannot query stores they don't belong to
+        // Scope from JWT — client cannot query stores they don't belong to
         Long clientId = customUserDetailsService.getCurrentClient().getClientId();
-        List<Long> storeIds = clientStoreMappingRepository
+        List<Long> allowedStoreIds = clientStoreMappingRepository
                 .findByIdClientId(clientId)
                 .stream()
                 .map(m -> m.getId().getStoreId())
                 .toList();
 
-        request.setStoreIds(storeIds);
+        List<Long> requestedStoreIds = request.getStoreIds();
+        if (requestedStoreIds != null && !requestedStoreIds.isEmpty()) {
+            if (!allowedStoreIds.containsAll(requestedStoreIds)) {
+                throw new ForbiddenException("Access denied to one or more requested stores");
+            }
+            request.setStoreIds(requestedStoreIds);
+        } else {
+            request.setStoreIds(allowedStoreIds);
+        }
         request.setClientId(null);
 
         AnalyticsResponse response = analyticsService.getAnalytics(request);
