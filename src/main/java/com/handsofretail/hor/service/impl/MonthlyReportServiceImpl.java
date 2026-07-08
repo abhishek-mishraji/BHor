@@ -305,19 +305,19 @@ public class MonthlyReportServiceImpl
                         throw new BadRequestException("Uploaded file name is missing");
                 }
                 java.util.regex.Matcher matcher = java.util.regex.Pattern
-                                .compile("^monthly_(\\d{1,2})_(\\d{4})\\.xlsx$")
+                                .compile("^monthly_(\\d{1,2})_(\\d{4})\\.(xlsx|xls)$")
                                 .matcher(filename);
                 if (!matcher.matches()) {
                         throw new BadRequestException(
                                         "Uploaded file name does not match report month and year. Expected: monthly_"
-                                                        + reportMonth + "_" + reportYear + ".xlsx");
+                                                        + reportMonth + "_" + reportYear + ".xlsx or .xls");
                 }
                 int fileMonth = Integer.parseInt(matcher.group(1));
                 int fileYear = Integer.parseInt(matcher.group(2));
                 if (fileMonth != reportMonth || fileYear != reportYear) {
                         throw new BadRequestException(
                                         "Uploaded file name does not match report month and year. Expected: monthly_"
-                                                        + reportMonth + "_" + reportYear + ".xlsx");
+                                                        + reportMonth + "_" + reportYear + ".xlsx or .xls");
                 }
         }
 
