@@ -3,7 +3,7 @@ HELP.md
 .env
 .env.prod
 build/
-database/
+
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
