@@ -56,9 +56,11 @@ dependencies {
 
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
-	implementation("org.apache.poi:poi:5.3.0")
-    implementation("org.apache.poi:poi-ooxml:5.3.0")
 	implementation("org.flywaydb:flyway-core:9.20.0")
+
+	implementation("org.apache.poi:poi:5.3.0")
+    implementation("org.apache.poi:poi-ooxml:5.3.0")	
+implementation("org.jsoup:jsoup:1.18.3")
 }
 
 tasks.withType<Test> {
