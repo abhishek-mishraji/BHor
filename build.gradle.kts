@@ -7,6 +7,10 @@ plugins {
 group = "com.handsofretail"
 version = "0.0.1-SNAPSHOT"
 
+tasks.bootRun {
+    jvmArgs = listOf("-Duser.timezone=UTC")
+}
+
 java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(21)
