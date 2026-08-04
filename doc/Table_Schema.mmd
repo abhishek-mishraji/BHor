@@ -12,6 +12,7 @@ erDiagram
     STORES ||--o{ DAILY_REPORTS : "owns daily reports"
     STORES ||--o{ MONTHLY_REPORTS : "owns monthly reports"
     STORES ||--o{ YEARLY_REPORTS : "owns yearly reports"
+    STORES ||--o{ LOTTERY_SALES_REPORTS_MONTHLY : "owns lottery monthly reports"
 
     ADMIN_USERS {
         Long admin_id PK
@@ -95,6 +96,20 @@ erDiagram
         BigDecimal refund
         BigDecimal void_amount
         BigDecimal net_sales
+        LocalDateTime created_at
+        LocalDateTime updated_at
+    }
+
+    LOTTERY_SALES_REPORTS_MONTHLY {
+        Long lottery_sales_report_monthly_id PK
+        Long store_id FK
+        Integer report_month
+        Integer report_year
+        BigDecimal online_sales
+        BigDecimal scratch_off_sales
+        BigDecimal online_cashes
+        BigDecimal scratch_off_cashes
+        BigDecimal commission
         LocalDateTime created_at
         LocalDateTime updated_at
     }

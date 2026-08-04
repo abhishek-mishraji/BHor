@@ -39,3 +39,7 @@ out/
 ### VS Code ###
 .vscode/
 .claude
+
+# H2 DB
+/database/h2/*.mv.db
+*.mv.db

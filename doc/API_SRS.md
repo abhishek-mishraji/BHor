@@ -1658,6 +1658,48 @@ GET /api/v1/admin/daily-reports?storeId=1&from=2026-06-01&to=2026-06-30
 
 ---
 
+### 7.6.1 Lottery Sales Reports — Monthly
+
+This subsection documents the Lottery-specific monthly sales reports. The service exposes a small CRUD surface for storing aggregated lottery sales and cashing values per store and month.
+
+#### Resource fields
+
+Request/Response fields for lottery monthly reports:
+
+- `storeId` (Long, required) — Existing store primary key
+- `reportMonth` (integer, required) — 1–12
+- `reportYear` (integer, required)
+- `onlineSales` (decimal, required, >= 0)
+- `scratchOffSales` (decimal, required, >= 0)
+- `onlineCashes` (decimal, required, >= 0)
+- `scratchOffCashes` (decimal, required, >= 0)
+- `commission` (decimal, required, >= 0)
+
+The response includes the generated `lotterySalesReportMonthlyId` plus the stored fields.
+
+#### Endpoints
+
+- `POST /api/v1/lottery-sales/monthly` — Create a lottery monthly sales report. Authenticated. Returns `201 Created` with the created report.
+- `GET /api/v1/lottery-sales/monthly/{id}` — Fetch a report by its ID. Authenticated. Returns `200 OK`.
+- `GET /api/v1/lottery-sales/monthly?storeId=&month=&year=` — List reports filtered by `storeId`, `month`, and/or `year`. Authenticated. Returns `200 OK`.
+- `PUT /api/v1/lottery-sales/monthly/{id}` — Update an existing report. Authenticated. Returns `200 OK`.
+- `DELETE /api/v1/lottery-sales/monthly/{id}` — Delete a report. Authenticated. Returns `200 OK`.
+
+#### Validation & Business Rules
+
+- `storeId` must reference an existing store (`404` if missing).
+- `reportMonth` must be between 1 and 12 (`400` if invalid).
+- Monetary fields must be non-negative (`400` on validation failure).
+- A unique constraint prevents two reports for the same `(store_id, report_month, report_year)`; duplicate attempts return `409`.
+
+#### Error responses
+
+Standard envelope errors apply. Common cases:
+
+- `400` — Validation failed (missing/invalid fields).
+- `404` — Store or report not found.
+- `409` — Duplicate report for the same store/month/year.
+
 #### `GET /api/v1/admin/monthly-reports`
 
 **Purpose:** Retrieve monthly reports with optional filters.  
@@ -2478,45 +2520,51 @@ No request body or query parameters. The client identity is extracted from the J
 | BR-15 | The monthly report upload endpoint deletes all existing reports for the given store/month/year before inserting new rows                                                                                                    |
 | BR-16 | Report records must always reference an existing, persisted store                                                                                                                                                           |
 | BR-17 | Monthly report Excel filename must match `monthly_<month>_<year>.xlsx` and values must match the request parameters                                                                                                         |
+| BR-18 | Lottery monthly reports table enforces a unique constraint on `(store_id, report_month, report_year)`; monetary fields must be non-negative.                                                                                |
 
 ---
 
 ## Appendix A — Endpoint Quick Reference
 
-| #   | Method   | Path                                               | Role   | Description                              |
-| --- | -------- | -------------------------------------------------- | ------ | ---------------------------------------- |
-| 1   | `POST`   | `/api/v1/auth/login`                               | Public | Login and issue JWT cookies              |
-| 2   | `POST`   | `/api/v1/auth/refresh`                             | Public | Rotate refresh token, issue new access   |
-| 3   | `POST`   | `/api/v1/auth/logout`                              | Public | Revoke refresh token, clear cookies      |
-| 4   | `POST`   | `/api/v1/admin/clients`                            | ADMIN  | Create client                            |
-| 5   | `GET`    | `/api/v1/admin/clients`                            | ADMIN  | Get all clients                          |
-| 6   | `PUT`    | `/api/v1/admin/clients/{id}`                       | ADMIN  | Update client                            |
-| 7   | `PATCH`  | `/api/v1/admin/clients/{id}/status`                | ADMIN  | Activate or deactivate client            |
-| 8   | `POST`   | `/api/v1/admin/stores`                             | ADMIN  | Create store (assigns OWNER)             |
-| 9   | `GET`    | `/api/v1/admin/stores`                             | ADMIN  | Get all stores (filterable)              |
-| 10  | `GET`    | `/api/v1/admin/stores/{storeId}`                   | ADMIN  | Get store by ID                          |
-| 11  | `PUT`    | `/api/v1/admin/stores/{storeId}`                   | ADMIN  | Update store (optionally reassign OWNER) |
-| 12  | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`            | ADMIN  | Toggle store status                      |
-| 13  | `GET`    | `/api/v1/admin/store-members?storeId={id}`         | ADMIN  | List store members (OWNER + PARTNERs)    |
-| 14  | `POST`   | `/api/v1/admin/store-members`                      | ADMIN  | Add member to store (body has storeId)   |
-| 15  | `DELETE` | `/api/v1/admin/store-members/{storeId}/{clientId}` | ADMIN  | Remove member from store                 |
-| 16  | `POST`   | `/api/v1/admin/daily-reports`                      | ADMIN  | Create daily report                      |
-| 17  | `GET`    | `/api/v1/admin/daily-reports`                      | ADMIN  | Get daily reports (filterable)           |
-| 18  | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`      | ADMIN  | Get daily reports by store               |
-| 19  | `PUT`    | `/api/v1/admin/daily-reports/{dailyReportId}`      | ADMIN  | Update daily report                      |
-| 20  | `POST`   | `/api/v1/admin/monthly-reports`                    | ADMIN  | Create monthly report                    |
-| 21  | `GET`    | `/api/v1/admin/monthly-reports`                    | ADMIN  | Get monthly reports (filterable)         |
-| 22  | `GET`    | `/api/v1/admin/monthly-reports/store/{storeId}`    | ADMIN  | Get monthly reports by store             |
-| 23  | `PUT`    | `/api/v1/admin/monthly-reports/{monthlyReportId}`  | ADMIN  | Update monthly report                    |
-| 24  | `POST`   | `/api/v1/admin/monthly-reports/upload`             | ADMIN  | Bulk upload monthly reports (Excel)      |
-| 25  | `POST`   | `/api/v1/admin/yearly-reports`                     | ADMIN  | Create yearly report                     |
-| 26  | `GET`    | `/api/v1/admin/yearly-reports`                     | ADMIN  | Get yearly reports (filterable)          |
-| 27  | `GET`    | `/api/v1/admin/yearly-reports/store/{storeId}`     | ADMIN  | Get yearly reports by store              |
-| 28  | `PUT`    | `/api/v1/admin/yearly-reports/{yearlyReportId}`    | ADMIN  | Update yearly report                     |
-| 29  | `GET`    | `/api/v1/client/stores`                            | CLIENT | Get own stores with role tag             |
-| 30  | `GET`    | `/api/v1/client/daily-reports/store/{storeId}`     | CLIENT | Get store's daily reports                |
-| 31  | `GET`    | `/api/v1/client/monthly-reports/store/{storeId}`   | CLIENT | Get store's monthly reports              |
-| 32  | `GET`    | `/api/v1/client/yearly-reports/store/{storeId}`    | CLIENT | Get store's yearly reports               |
+| #   | Method   | Path                                               | Role          | Description                               |
+| --- | -------- | -------------------------------------------------- | ------------- | ----------------------------------------- |
+| 1   | `POST`   | `/api/v1/auth/login`                               | Public        | Login and issue JWT cookies               |
+| 2   | `POST`   | `/api/v1/auth/refresh`                             | Public        | Rotate refresh token, issue new access    |
+| 3   | `POST`   | `/api/v1/auth/logout`                              | Public        | Revoke refresh token, clear cookies       |
+| 4   | `POST`   | `/api/v1/admin/clients`                            | ADMIN         | Create client                             |
+| 5   | `GET`    | `/api/v1/admin/clients`                            | ADMIN         | Get all clients                           |
+| 6   | `PUT`    | `/api/v1/admin/clients/{id}`                       | ADMIN         | Update client                             |
+| 7   | `PATCH`  | `/api/v1/admin/clients/{id}/status`                | ADMIN         | Activate or deactivate client             |
+| 8   | `POST`   | `/api/v1/admin/stores`                             | ADMIN         | Create store (assigns OWNER)              |
+| 9   | `GET`    | `/api/v1/admin/stores`                             | ADMIN         | Get all stores (filterable)               |
+| 10  | `GET`    | `/api/v1/admin/stores/{storeId}`                   | ADMIN         | Get store by ID                           |
+| 11  | `PUT`    | `/api/v1/admin/stores/{storeId}`                   | ADMIN         | Update store (optionally reassign OWNER)  |
+| 12  | `PATCH`  | `/api/v1/admin/stores/{storeId}/status`            | ADMIN         | Toggle store status                       |
+| 13  | `GET`    | `/api/v1/admin/store-members?storeId={id}`         | ADMIN         | List store members (OWNER + PARTNERs)     |
+| 14  | `POST`   | `/api/v1/admin/store-members`                      | ADMIN         | Add member to store (body has storeId)    |
+| 15  | `DELETE` | `/api/v1/admin/store-members/{storeId}/{clientId}` | ADMIN         | Remove member from store                  |
+| 16  | `POST`   | `/api/v1/admin/daily-reports`                      | ADMIN         | Create daily report                       |
+| 17  | `GET`    | `/api/v1/admin/daily-reports`                      | ADMIN         | Get daily reports (filterable)            |
+| 18  | `GET`    | `/api/v1/admin/daily-reports/store/{storeId}`      | ADMIN         | Get daily reports by store                |
+| 19  | `PUT`    | `/api/v1/admin/daily-reports/{dailyReportId}`      | ADMIN         | Update daily report                       |
+| 20  | `POST`   | `/api/v1/admin/monthly-reports`                    | ADMIN         | Create monthly report                     |
+| 21  | `GET`    | `/api/v1/admin/monthly-reports`                    | ADMIN         | Get monthly reports (filterable)          |
+| 22  | `GET`    | `/api/v1/admin/monthly-reports/store/{storeId}`    | ADMIN         | Get monthly reports by store              |
+| 23  | `PUT`    | `/api/v1/admin/monthly-reports/{monthlyReportId}`  | ADMIN         | Update monthly report                     |
+| 24  | `POST`   | `/api/v1/admin/monthly-reports/upload`             | ADMIN         | Bulk upload monthly reports (Excel)       |
+| 25  | `POST`   | `/api/v1/admin/yearly-reports`                     | ADMIN         | Create yearly report                      |
+| 26  | `GET`    | `/api/v1/admin/yearly-reports`                     | ADMIN         | Get yearly reports (filterable)           |
+| 27  | `GET`    | `/api/v1/admin/yearly-reports/store/{storeId}`     | ADMIN         | Get yearly reports by store               |
+| 28  | `PUT`    | `/api/v1/admin/yearly-reports/{yearlyReportId}`    | ADMIN         | Update yearly report                      |
+| 29  | `GET`    | `/api/v1/client/stores`                            | CLIENT        | Get own stores with role tag              |
+| 30  | `GET`    | `/api/v1/client/daily-reports/store/{storeId}`     | CLIENT        | Get store's daily reports                 |
+| 31  | `GET`    | `/api/v1/client/monthly-reports/store/{storeId}`   | CLIENT        | Get store's monthly reports               |
+| 32  | `GET`    | `/api/v1/client/yearly-reports/store/{storeId}`    | CLIENT        | Get store's yearly reports                |
+| 33  | `POST`   | `/api/v1/lottery-sales/monthly`                    | Authenticated | Create lottery monthly report             |
+| 34  | `GET`    | `/api/v1/lottery-sales/monthly`                    | Authenticated | List lottery monthly reports (filterable) |
+| 35  | `GET`    | `/api/v1/lottery-sales/monthly/{id}`               | Authenticated | Get lottery monthly report by ID          |
+| 36  | `PUT`    | `/api/v1/lottery-sales/monthly/{id}`               | Authenticated | Update lottery monthly report             |
+| 37  | `DELETE` | `/api/v1/lottery-sales/monthly/{id}`               | Authenticated | Delete lottery monthly report             |
 
 ---
 
