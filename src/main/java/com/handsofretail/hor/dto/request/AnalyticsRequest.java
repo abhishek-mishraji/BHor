@@ -28,7 +28,8 @@ public class AnalyticsRequest {
     private AggregateType aggregate = AggregateType.SUM;
 
     // Scope filters. Admin: storeIds or clientId required (not both).
-    // Client: storeIds optionally narrows to a subset of own stores; clientId ignored.
+    // Client: storeIds optionally narrows to a subset of own stores; clientId
+    // ignored.
     private List<Long> storeIds;
     private Long clientId;
 
@@ -43,4 +44,10 @@ public class AnalyticsRequest {
     private Integer month;
     private List<Integer> year;
     private String departmentId;
+
+    // Gas monthly comparison filters
+    private Integer comparisonAMonth;
+    private Integer comparisonAYear;
+    private Integer comparisonBMonth;
+    private Integer comparisonBYear;
 }
