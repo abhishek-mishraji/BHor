@@ -3,6 +3,10 @@ package com.handsofretail.hor.controller.admin;
 import com.handsofretail.hor.entity.ClientStoreId;
 import com.handsofretail.hor.entity.ClientStoreMapping;
 import com.handsofretail.hor.entity.ClientUser;
+import com.handsofretail.hor.entity.FuelType;
+import com.handsofretail.hor.entity.GasSalesReportDetail;
+import com.handsofretail.hor.entity.GasSalesReportMonthly;
+import com.handsofretail.hor.entity.LotterySalesReportMonthly;
 import com.handsofretail.hor.entity.MonthlyReport;
 import com.handsofretail.hor.entity.Store;
 import com.handsofretail.hor.enums.Status;
@@ -10,8 +14,12 @@ import com.handsofretail.hor.enums.StoreRole;
 import com.handsofretail.hor.enums.UserRole;
 import com.handsofretail.hor.repository.ClientStoreMappingRepository;
 import com.handsofretail.hor.repository.ClientUserRepository;
+import com.handsofretail.hor.repository.FuelTypeRepository;
+import com.handsofretail.hor.repository.GasSalesReportMonthlyRepository;
+import com.handsofretail.hor.repository.LotterySalesReportMonthlyRepository;
 import com.handsofretail.hor.repository.MonthlyReportRepository;
 import com.handsofretail.hor.repository.StoreRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,15 +48,21 @@ class AnalyticsControllerIntegrationTest {
     @Autowired private MonthlyReportRepository monthlyReportRepository;
     @Autowired private ClientUserRepository clientUserRepository;
     @Autowired private ClientStoreMappingRepository clientStoreMappingRepository;
+    @Autowired private GasSalesReportMonthlyRepository gasSalesReportMonthlyRepository;
+    @Autowired private LotterySalesReportMonthlyRepository lotterySalesReportMonthlyRepository;
+    @Autowired private FuelTypeRepository fuelTypeRepository;
 
     private Store store;
 
     @BeforeEach
     void setUp() {
+        lotterySalesReportMonthlyRepository.deleteAll();
+        gasSalesReportMonthlyRepository.deleteAll();
         monthlyReportRepository.deleteAll();
         clientStoreMappingRepository.deleteAll();
         storeRepository.deleteAll();
         clientUserRepository.deleteAll();
+        fuelTypeRepository.deleteAll();
 
         store = storeRepository.save(Store.builder()
                 .storeName("Analytics Store")
@@ -62,6 +76,17 @@ class AnalyticsControllerIntegrationTest {
         saveReport(2025, 3, "48900.00", "1200.00");
         saveReport(2026, 1, "60100.00", "1300.00");
         saveReport(2026, 2, "55400.00", "1400.00");
+    }
+
+    @AfterEach
+    void tearDown() {
+        lotterySalesReportMonthlyRepository.deleteAll();
+        gasSalesReportMonthlyRepository.deleteAll();
+        monthlyReportRepository.deleteAll();
+        clientStoreMappingRepository.deleteAll();
+        storeRepository.deleteAll();
+        clientUserRepository.deleteAll();
+        fuelTypeRepository.deleteAll();
     }
 
     // -------------------------------------------------------------------------
@@ -347,6 +372,157 @@ class AnalyticsControllerIntegrationTest {
     }
 
     // -------------------------------------------------------------------------
+    // GAS_MONTHLY detail metrics
+    // -------------------------------------------------------------------------
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void gasMonthlyDetailMetrics_returnRequestedFuelValuesAndZeroWhenMissing() throws Exception {
+        FuelType regular = fuelTypeRepository.save(FuelType.builder().fuelName("Regular").build());
+        FuelType diesel = fuelTypeRepository.save(FuelType.builder().fuelName("Diesel").build());
+        saveGasReport(1, 2026, regular, "100.00", "0.25", diesel, "50.00", "0.40");
+        saveGasReport(2, 2026, regular, "120.00", "0.30", null, null, null);
+
+        mockMvc.perform(get(ADMIN_URL)
+                        .param("reportType", "GAS_MONTHLY")
+                        .param("groupBy", "MONTH")
+                        .param("metric", "DETAIL_VOLUME_SOLD_" + regular.getFuelTypeId())
+                        .param("metric", "DETAIL_PROFIT_" + regular.getFuelTypeId())
+                        .param("metric", "DETAIL_VOLUME_SOLD_" + diesel.getFuelTypeId())
+                        .param("storeIds", String.valueOf(store.getStoreId()))
+                        .param("comparisonAMonth", "1")
+                        .param("comparisonAYear", "2026")
+                        .param("comparisonBMonth", "2")
+                        .param("comparisonBYear", "2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.datasets[0].label")
+                        .value("Volume Sold (Regular)"))
+                .andExpect(jsonPath("$.data.datasets[0].data[0]").value(100.00))
+                .andExpect(jsonPath("$.data.datasets[0].data[1]").value(120.00))
+                .andExpect(jsonPath("$.data.datasets[1].label")
+                        .value("Profit Per Gallon (Regular)"))
+                .andExpect(jsonPath("$.data.datasets[1].data[0]").value(0.25))
+                .andExpect(jsonPath("$.data.datasets[1].data[1]").value(0.30))
+                .andExpect(jsonPath("$.data.datasets[2].data[0]").value(50.00))
+                .andExpect(jsonPath("$.data.datasets[2].data[1]").value(0));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void gasMonthlyDetailMetric_usesFuelNameFromComparisonBWhenAbsentFromComparisonA() throws Exception {
+        FuelType regular = fuelTypeRepository.save(FuelType.builder().fuelName("Regular").build());
+        FuelType diesel = fuelTypeRepository.save(FuelType.builder().fuelName("Diesel").build());
+        saveGasReport(1, 2026, regular, "100.00", "0.25", null, null, null);
+        saveGasReport(2, 2026, diesel, "50.00", "0.40", null, null, null);
+
+        mockMvc.perform(get(ADMIN_URL)
+                        .param("reportType", "GAS_MONTHLY")
+                        .param("groupBy", "MONTH")
+                        .param("metric", "DETAIL_PROFIT_" + diesel.getFuelTypeId())
+                        .param("storeIds", String.valueOf(store.getStoreId()))
+                        .param("comparisonAMonth", "1")
+                        .param("comparisonAYear", "2026")
+                        .param("comparisonBMonth", "2")
+                        .param("comparisonBYear", "2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.datasets[0].label").value("Profit Per Gallon (Diesel)"))
+                .andExpect(jsonPath("$.data.datasets[0].data[0]").value(0))
+                .andExpect(jsonPath("$.data.datasets[0].data[1]").value(0.40));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void gasMonthlyDetailMetric_withInvalidFormat_returns400() throws Exception {
+        mockMvc.perform(get(ADMIN_URL)
+                        .param("reportType", "GAS_MONTHLY")
+                        .param("groupBy", "MONTH")
+                        .param("metric", "DETAIL_VOLUME_SOLD_invalid")
+                        .param("storeIds", String.valueOf(store.getStoreId()))
+                        .param("comparisonAMonth", "1")
+                        .param("comparisonAYear", "2026")
+                        .param("comparisonBMonth", "2")
+                        .param("comparisonBYear", "2026"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void gasMonthlyAllMetric_expandsToRootAndAllUniqueFuelDetailMetrics() throws Exception {
+        FuelType regular = fuelTypeRepository.save(FuelType.builder().fuelName("Regular").build());
+        FuelType diesel = fuelTypeRepository.save(FuelType.builder().fuelName("Diesel").build());
+        saveGasReport(1, 2026, regular, "100.00", "0.25", diesel, "50.00", "0.40");
+        saveGasReport(2, 2026, regular, "120.00", "0.30", null, null, null);
+
+        mockMvc.perform(get(ADMIN_URL)
+                        .param("reportType", "GAS_MONTHLY")
+                        .param("groupBy", "MONTH")
+                        .param("metric", "all")
+                        .param("storeIds", String.valueOf(store.getStoreId()))
+                        .param("comparisonAMonth", "1")
+                        .param("comparisonAYear", "2026")
+                        .param("comparisonBMonth", "2")
+                        .param("comparisonBYear", "2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.datasets.length()").value(8))
+                .andExpect(jsonPath("$.data.datasets[0].metric").value("CREDIT_FEES"))
+                .andExpect(jsonPath("$.data.datasets[3].metric").value("NET_PROFIT_PER_GALLON"))
+                .andExpect(jsonPath("$.data.datasets[4].metric")
+                        .value("DETAIL_VOLUME_SOLD_" + regular.getFuelTypeId()))
+                .andExpect(jsonPath("$.data.datasets[7].metric")
+                        .value("DETAIL_PROFIT_" + diesel.getFuelTypeId()))
+                .andExpect(jsonPath("$.data.datasets[6].data[1]").value(0));
+    }
+
+    // -------------------------------------------------------------------------
+    // LOTTERY_MONTHLY comparison metrics
+    // -------------------------------------------------------------------------
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void lotteryMonthlyAllMetric_returnsEveryMetricWithComparisonValues() throws Exception {
+        saveLotteryReport(1, 2026, "150.00", "80.00", "20.00", "10.00", "30.00");
+        saveLotteryReport(2, 2026, "100.00", "60.00", "10.00", "20.00", "25.00");
+
+        mockMvc.perform(get(ADMIN_URL)
+                        .param("reportType", "LOTTERY_MONTHLY")
+                        .param("groupBy", "MONTH")
+                        .param("metric", "ALL")
+                        .param("storeIds", String.valueOf(store.getStoreId()))
+                        .param("comparisonAMonth", "1")
+                        .param("comparisonAYear", "2026")
+                        .param("comparisonBMonth", "2")
+                        .param("comparisonBYear", "2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.labels[0]").value("comparisonA"))
+                .andExpect(jsonPath("$.data.datasets.length()").value(5))
+                .andExpect(jsonPath("$.data.datasets[0].metric").value("ONLINE_SALES"))
+                .andExpect(jsonPath("$.data.datasets[0].label").value("Online Sales"))
+                .andExpect(jsonPath("$.data.datasets[0].valueA").value(150.00))
+                .andExpect(jsonPath("$.data.datasets[0].valueB").value(100.00))
+                .andExpect(jsonPath("$.data.datasets[0].difference").value(50.00))
+                .andExpect(jsonPath("$.data.datasets[0].percentageDifference").value(50.00))
+                .andExpect(jsonPath("$.data.datasets[4].metric").value("COMMISSION"))
+                .andExpect(jsonPath("$.data.datasets[4].data[1]").value(25.00));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void lotteryMonthlyMetric_withInvalidKey_returns400() throws Exception {
+        mockMvc.perform(get(ADMIN_URL)
+                        .param("reportType", "LOTTERY_MONTHLY")
+                        .param("groupBy", "MONTH")
+                        .param("metric", "INVALID")
+                        .param("storeIds", String.valueOf(store.getStoreId()))
+                        .param("comparisonAMonth", "1")
+                        .param("comparisonAYear", "2026")
+                        .param("comparisonBMonth", "2")
+                        .param("comparisonBYear", "2026"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -361,6 +537,64 @@ class AnalyticsControllerIntegrationTest {
                 .promotion(BigDecimal.ZERO)
                 .refund(BigDecimal.ZERO)
                 .voidAmount(BigDecimal.ZERO)
+                .build());
+    }
+
+    private void saveGasReport(
+            int month,
+            int year,
+            FuelType firstFuelType,
+            String firstVolumeSold,
+            String firstProfitPerGallon,
+            FuelType secondFuelType,
+            String secondVolumeSold,
+            String secondProfitPerGallon) {
+        GasSalesReportMonthly report = GasSalesReportMonthly.builder()
+                .store(store)
+                .reportMonth(month)
+                .reportYear(year)
+                .creditFees(BigDecimal.ZERO)
+                .totalVolumeSold(BigDecimal.ZERO)
+                .netProfitPerGallon(BigDecimal.ZERO)
+                .netProfit(BigDecimal.ZERO)
+                .build();
+        addGasDetail(report, firstFuelType, firstVolumeSold, firstProfitPerGallon);
+        if (secondFuelType != null) {
+            addGasDetail(report, secondFuelType, secondVolumeSold, secondProfitPerGallon);
+        }
+        gasSalesReportMonthlyRepository.save(report);
+    }
+
+    private void addGasDetail(
+            GasSalesReportMonthly report,
+            FuelType fuelType,
+            String volumeSold,
+            String profitPerGallon) {
+        report.getDetails().add(GasSalesReportDetail.builder()
+                .gasSalesReportMonthly(report)
+                .fuelType(fuelType)
+                .volumeSold(new BigDecimal(volumeSold))
+                .profitPerGallon(new BigDecimal(profitPerGallon))
+                .build());
+    }
+
+    private void saveLotteryReport(
+            int month,
+            int year,
+            String onlineSales,
+            String scratchOffSales,
+            String onlineCashes,
+            String scratchOffCashes,
+            String commission) {
+        lotterySalesReportMonthlyRepository.save(LotterySalesReportMonthly.builder()
+                .store(store)
+                .reportMonth(month)
+                .reportYear(year)
+                .onlineSales(new BigDecimal(onlineSales))
+                .scratchOffSales(new BigDecimal(scratchOffSales))
+                .onlineCashes(new BigDecimal(onlineCashes))
+                .scratchOffCashes(new BigDecimal(scratchOffCashes))
+                .commission(new BigDecimal(commission))
                 .build());
     }
 }

@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController("gasSalesReportMonthlyQueryController")
-@RequestMapping("/api/v1/gas-sales/monthly")
+@RequestMapping("/api/v1/admin/gas-sales/monthly")
 @RequiredArgsConstructor
 public class GasSalesReportMonthlyController {
 

@@ -15,11 +15,17 @@ public interface GasSalesReportMonthlyService {
             Integer reportMonth,
             Integer reportYear,
             BigDecimal creditFees,
+            BigDecimal totalVolumeSold,
+            BigDecimal netProfitPerGallon,
+            BigDecimal netProfit,
             List<GasSalesReportDetail> details);
 
     GasSalesReportMonthly updateReport(
             Long reportId,
             BigDecimal creditFees,
+            BigDecimal totalVolumeSold,
+            BigDecimal netProfitPerGallon,
+            BigDecimal netProfit,
             List<GasSalesReportDetail> details);
 
     void deleteReport(Long reportId);

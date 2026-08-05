@@ -5,6 +5,7 @@ import com.handsofretail.hor.dto.response.AnalyticsResponse;
 import com.handsofretail.hor.dto.response.DatasetDto;
 import com.handsofretail.hor.entity.DailyReport;
 import com.handsofretail.hor.entity.GasSalesReportMonthly;
+import com.handsofretail.hor.entity.LotterySalesReportMonthly;
 import com.handsofretail.hor.entity.MonthlyReport;
 import com.handsofretail.hor.entity.Store;
 import com.handsofretail.hor.enums.AggregateType;
@@ -15,6 +16,7 @@ import com.handsofretail.hor.exception.ResourceNotFoundException;
 import com.handsofretail.hor.repository.ClientStoreMappingRepository;
 import com.handsofretail.hor.repository.ClientUserRepository;
 import com.handsofretail.hor.repository.GasSalesReportMonthlyRepository;
+import com.handsofretail.hor.repository.LotterySalesReportMonthlyRepository;
 import com.handsofretail.hor.service.AnalyticsService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Tuple;
@@ -26,6 +28,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -35,6 +39,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     private final ClientStoreMappingRepository clientStoreMappingRepository;
     private final ClientUserRepository clientUserRepository;
     private final GasSalesReportMonthlyRepository gasSalesReportMonthlyRepository;
+    private final LotterySalesReportMonthlyRepository lotterySalesReportMonthlyRepository;
 
     private static final Set<String> DAILY_METRICS = Set.of(
             "groceryTotal", "volume", "cashDeposit", "checkDeposit",
@@ -43,8 +48,14 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     private static final Set<String> MONTHLY_METRICS = Set.of(
             "gross", "netSales", "discount", "promotion", "refund", "voidAmount");
 
-    private static final Set<String> GAS_MONTHLY_METRICS = Set.of(
+    private static final List<String> GAS_MONTHLY_METRICS = List.of(
             "CREDIT_FEES", "TOTAL_VOLUME_SOLD", "NET_PROFIT", "NET_PROFIT_PER_GALLON");
+
+    private static final List<String> LOTTERY_MONTHLY_METRICS = List.of(
+            "ONLINE_SALES", "SCRATCH_OFF_SALES", "ONLINE_CASHES", "SCRATCH_OFF_CASHES", "COMMISSION");
+
+    private static final Pattern GAS_DETAIL_METRIC_PATTERN = Pattern.compile(
+            "^DETAIL_(VOLUME_SOLD|PROFIT)_([1-9]\\d*)$");
 
     private static final Set<GroupByField> DAILY_GROUP_BY = Set.of(GroupByField.DATE, GroupByField.STORE);
 
@@ -70,7 +81,12 @@ public class AnalyticsServiceImpl implements AnalyticsService {
             Map.entry("CREDIT_FEES", "Credit Fees"),
             Map.entry("TOTAL_VOLUME_SOLD", "Total Volume Sold"),
             Map.entry("NET_PROFIT", "Net Profit"),
-            Map.entry("NET_PROFIT_PER_GALLON", "Net Profit Per Gallon"));
+            Map.entry("NET_PROFIT_PER_GALLON", "Net Profit Per Gallon"),
+            Map.entry("ONLINE_SALES", "Online Sales"),
+            Map.entry("SCRATCH_OFF_SALES", "Scratch Off Sales"),
+            Map.entry("ONLINE_CASHES", "Online Cashes"),
+            Map.entry("SCRATCH_OFF_CASHES", "Scratch Off Cashes"),
+            Map.entry("COMMISSION", "Commission"));
 
     @Override
     @Transactional(readOnly = true)
@@ -82,6 +98,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
             case DAILY -> executeDailyAnalytics(request);
             case MONTHLY -> executeMonthlyAnalytics(request);
             case GAS_MONTHLY -> executeGasMonthlyAnalytics(request);
+            case LOTTERY_MONTHLY -> executeLotteryMonthlyAnalytics(request);
         };
     }
 
@@ -93,6 +110,10 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
         if (type == ReportType.GAS_MONTHLY) {
             validateGasMonthlyRequest(request);
+            return;
+        }
+        if (type == ReportType.LOTTERY_MONTHLY) {
+            validateLotteryMonthlyRequest(request);
             return;
         }
 
@@ -155,10 +176,16 @@ public class AnalyticsServiceImpl implements AnalyticsService {
         validateGasPeriod(request.getComparisonBMonth(), request.getComparisonBYear());
 
         for (String metric : request.getMetric()) {
-            if (!GAS_MONTHLY_METRICS.contains(normalizeGasMetric(metric))) {
+            if ("ALL".equalsIgnoreCase(metric)) {
+                continue;
+            }
+            String normalizedMetric = normalizeGasMetric(metric);
+            if (!GAS_MONTHLY_METRICS.contains(normalizedMetric)
+                    && parseGasDetailMetric(normalizedMetric) == null) {
                 throw new BadRequestException(
                         "Metric '" + metric + "' is not valid for GAS_MONTHLY reports. Valid metrics: "
-                                + GAS_MONTHLY_METRICS);
+                                + GAS_MONTHLY_METRICS
+                                + ", DETAIL_VOLUME_SOLD_{fuelTypeId}, DETAIL_PROFIT_{fuelTypeId}");
             }
         }
     }
@@ -169,6 +196,41 @@ public class AnalyticsServiceImpl implements AnalyticsService {
         }
         if (year < 1 || year > 9999) {
             throw new BadRequestException("Gas report year must be between 1 and 9999");
+        }
+    }
+
+    private void validateLotteryMonthlyRequest(AnalyticsRequest request) {
+        if (request.getGroupBy() != GroupByField.MONTH) {
+            throw new BadRequestException("groupBy=MONTH is required for LOTTERY_MONTHLY reports");
+        }
+        if (isNullOrEmpty(request.getStoreIds()) || request.getStoreIds().size() != 1) {
+            throw new BadRequestException("Exactly one storeId is required for LOTTERY_MONTHLY reports");
+        }
+        if (request.getComparisonAMonth() == null || request.getComparisonAYear() == null
+                || request.getComparisonBMonth() == null || request.getComparisonBYear() == null) {
+            throw new BadRequestException("Both lottery monthly comparison periods are required");
+        }
+        validateLotteryPeriod(request.getComparisonAMonth(), request.getComparisonAYear());
+        validateLotteryPeriod(request.getComparisonBMonth(), request.getComparisonBYear());
+
+        for (String metric : request.getMetric()) {
+            if ("ALL".equalsIgnoreCase(metric)) {
+                continue;
+            }
+            if (!LOTTERY_MONTHLY_METRICS.contains(normalizeLotteryMetric(metric))) {
+                throw new BadRequestException(
+                        "Metric '" + metric + "' is not valid for LOTTERY_MONTHLY reports. Valid metrics: "
+                                + LOTTERY_MONTHLY_METRICS + ", ALL");
+            }
+        }
+    }
+
+    private void validateLotteryPeriod(Integer month, Integer year) {
+        if (month < 1 || month > 12) {
+            throw new BadRequestException("Lottery report month must be between 1 and 12");
+        }
+        if (year < 1 || year > 9999) {
+            throw new BadRequestException("Lottery report year must be between 1 and 9999");
         }
     }
 
@@ -307,8 +369,9 @@ public class AnalyticsServiceImpl implements AnalyticsService {
                 storeId, request.getComparisonAMonth(), request.getComparisonAYear());
         GasSalesReportMonthly reportB = findGasReport(
                 storeId, request.getComparisonBMonth(), request.getComparisonBYear());
+        List<String> metrics = expandGasMetrics(request.getMetric(), reportA, reportB);
 
-        List<DatasetDto> datasets = request.getMetric().stream()
+        List<DatasetDto> datasets = metrics.stream()
                 .map(metric -> toGasDataset(metric, reportA, reportB))
                 .toList();
 
@@ -330,17 +393,107 @@ public class AnalyticsServiceImpl implements AnalyticsService {
                 .build();
     }
 
+    private List<String> expandGasMetrics(
+            List<String> requestedMetrics,
+            GasSalesReportMonthly reportA,
+            GasSalesReportMonthly reportB) {
+        boolean includeAllMetrics = requestedMetrics.stream()
+                .anyMatch(metric -> "ALL".equalsIgnoreCase(metric));
+        if (!includeAllMetrics) {
+            return requestedMetrics;
+        }
+
+        Set<String> expandedMetrics = new LinkedHashSet<>();
+        requestedMetrics.stream()
+                .filter(metric -> !"ALL".equalsIgnoreCase(metric))
+                .map(this::normalizeGasMetric)
+                .forEach(expandedMetrics::add);
+        expandedMetrics.addAll(GAS_MONTHLY_METRICS);
+
+        Set<Long> fuelTypeIds = new TreeSet<>();
+        collectFuelTypeIds(reportA, fuelTypeIds);
+        collectFuelTypeIds(reportB, fuelTypeIds);
+        for (Long fuelTypeId : fuelTypeIds) {
+            expandedMetrics.add("DETAIL_VOLUME_SOLD_" + fuelTypeId);
+            expandedMetrics.add("DETAIL_PROFIT_" + fuelTypeId);
+        }
+        return List.copyOf(expandedMetrics);
+    }
+
+    private void collectFuelTypeIds(GasSalesReportMonthly report, Set<Long> fuelTypeIds) {
+        report.getDetails().stream()
+                .map(detail -> detail.getFuelType())
+                .filter(Objects::nonNull)
+                .map(fuelType -> fuelType.getFuelTypeId())
+                .filter(Objects::nonNull)
+                .forEach(fuelTypeIds::add);
+    }
+
     private GasSalesReportMonthly findGasReport(Long storeId, Integer month, Integer year) {
         return gasSalesReportMonthlyRepository
                 .findByStoreStoreIdAndReportMonthAndReportYear(storeId, month, year)
                 .orElseThrow(() -> new ResourceNotFoundException("Gas sales monthly report not found"));
     }
 
-    private DatasetDto toGasDataset(String metric, GasSalesReportMonthly reportA,
-            GasSalesReportMonthly reportB) {
-        String normalizedMetric = normalizeGasMetric(metric);
-        BigDecimal valueA = gasMetricValue(normalizedMetric, reportA);
-        BigDecimal valueB = gasMetricValue(normalizedMetric, reportB);
+    private AnalyticsResponse executeLotteryMonthlyAnalytics(AnalyticsRequest request) {
+        Long storeId = request.getStoreIds().get(0);
+        LotterySalesReportMonthly reportA = findLotteryReport(
+                storeId, request.getComparisonAMonth(), request.getComparisonAYear());
+        LotterySalesReportMonthly reportB = findLotteryReport(
+                storeId, request.getComparisonBMonth(), request.getComparisonBYear());
+        List<String> metrics = expandLotteryMetrics(request.getMetric());
+
+        List<DatasetDto> datasets = metrics.stream()
+                .map(metric -> toLotteryDataset(metric, reportA, reportB))
+                .toList();
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("reportType", request.getReportType());
+        meta.put("groupBy", request.getGroupBy());
+        meta.put("storeId", storeId);
+        meta.put("storeName", reportA.getStore().getStoreName());
+        meta.put("comparisonAMonth", request.getComparisonAMonth());
+        meta.put("comparisonAYear", request.getComparisonAYear());
+        meta.put("comparisonBMonth", request.getComparisonBMonth());
+        meta.put("comparisonBYear", request.getComparisonBYear());
+        meta.put("totalDataPoints", datasets.size());
+
+        return AnalyticsResponse.builder()
+                .labels(List.of("comparisonA", "comparisonB"))
+                .datasets(datasets)
+                .meta(meta)
+                .build();
+    }
+
+    private LotterySalesReportMonthly findLotteryReport(Long storeId, Integer month, Integer year) {
+        return lotterySalesReportMonthlyRepository
+                .findByStoreIdAndReportMonthAndReportYear(storeId, month, year)
+                .orElseThrow(() -> new ResourceNotFoundException("Lottery sales monthly report not found"));
+    }
+
+    private List<String> expandLotteryMetrics(List<String> requestedMetrics) {
+        boolean includeAllMetrics = requestedMetrics.stream()
+                .anyMatch(metric -> "ALL".equalsIgnoreCase(metric));
+        if (!includeAllMetrics) {
+            return requestedMetrics;
+        }
+
+        Set<String> expandedMetrics = new LinkedHashSet<>();
+        requestedMetrics.stream()
+                .filter(metric -> !"ALL".equalsIgnoreCase(metric))
+                .map(this::normalizeLotteryMetric)
+                .forEach(expandedMetrics::add);
+        expandedMetrics.addAll(LOTTERY_MONTHLY_METRICS);
+        return List.copyOf(expandedMetrics);
+    }
+
+    private DatasetDto toLotteryDataset(
+            String metric,
+            LotterySalesReportMonthly reportA,
+            LotterySalesReportMonthly reportB) {
+        String normalizedMetric = normalizeLotteryMetric(metric);
+        BigDecimal valueA = lotteryMetricValue(normalizedMetric, reportA);
+        BigDecimal valueB = lotteryMetricValue(normalizedMetric, reportB);
         BigDecimal difference = valueA.subtract(valueB);
         BigDecimal percentageDifference = valueB.signum() == 0
                 ? BigDecimal.ZERO
@@ -359,7 +512,58 @@ public class AnalyticsServiceImpl implements AnalyticsService {
                 .build();
     }
 
+    private String normalizeLotteryMetric(String metric) {
+        if (metric == null) {
+            return null;
+        }
+        return switch (metric) {
+            case "onlineSales", "ONLINE_SALES" -> "ONLINE_SALES";
+            case "scratchOffSales", "SCRATCH_OFF_SALES" -> "SCRATCH_OFF_SALES";
+            case "onlineCashes", "ONLINE_CASHES" -> "ONLINE_CASHES";
+            case "scratchOffCashes", "SCRATCH_OFF_CASHES" -> "SCRATCH_OFF_CASHES";
+            case "commission", "COMMISSION" -> "COMMISSION";
+            default -> metric.toUpperCase(Locale.ROOT);
+        };
+    }
+
+    private BigDecimal lotteryMetricValue(String metric, LotterySalesReportMonthly report) {
+        return switch (metric) {
+            case "ONLINE_SALES" -> report.getOnlineSales();
+            case "SCRATCH_OFF_SALES" -> report.getScratchOffSales();
+            case "ONLINE_CASHES" -> report.getOnlineCashes();
+            case "SCRATCH_OFF_CASHES" -> report.getScratchOffCashes();
+            case "COMMISSION" -> report.getCommission();
+            default -> throw new BadRequestException("Unsupported lottery metric: " + metric);
+        };
+    }
+
+    private DatasetDto toGasDataset(String metric, GasSalesReportMonthly reportA,
+            GasSalesReportMonthly reportB) {
+        String normalizedMetric = normalizeGasMetric(metric);
+        BigDecimal valueA = gasMetricValue(normalizedMetric, reportA);
+        BigDecimal valueB = gasMetricValue(normalizedMetric, reportB);
+        BigDecimal difference = valueA.subtract(valueB);
+        BigDecimal percentageDifference = valueB.signum() == 0
+                ? BigDecimal.ZERO
+                : difference.divide(valueB, 6, RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100))
+                        .setScale(2, RoundingMode.HALF_UP);
+
+        return DatasetDto.builder()
+                .label(gasMetricLabel(normalizedMetric, reportA, reportB))
+                .metric(normalizedMetric)
+                .data(List.of(valueA, valueB))
+                .valueA(valueA)
+                .valueB(valueB)
+                .difference(difference)
+                .percentageDifference(percentageDifference)
+                .build();
+    }
+
     private String normalizeGasMetric(String metric) {
+        if (metric == null) {
+            return null;
+        }
         return switch (metric) {
             case "creditFees", "CREDIT_FEES" -> "CREDIT_FEES";
             case "totalVolumeSold", "TOTAL_VOLUME_SOLD" -> "TOTAL_VOLUME_SOLD";
@@ -370,6 +574,18 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     }
 
     private BigDecimal gasMetricValue(String metric, GasSalesReportMonthly report) {
+        GasDetailMetric detailMetric = parseGasDetailMetric(metric);
+        if (detailMetric != null) {
+            return report.getDetails().stream()
+                    .filter(detail -> detail.getFuelType() != null
+                            && Objects.equals(detailMetric.fuelTypeId(), detail.getFuelType().getFuelTypeId()))
+                    .findFirst()
+                    .map(detail -> detailMetric.type() == GasDetailMetricType.VOLUME_SOLD
+                            ? detail.getVolumeSold()
+                            : detail.getProfitPerGallon())
+                    .orElse(BigDecimal.ZERO);
+        }
+
         return switch (metric) {
             case "CREDIT_FEES" -> report.getCreditFees();
             case "TOTAL_VOLUME_SOLD" -> report.getTotalVolumeSold();
@@ -377,6 +593,57 @@ public class AnalyticsServiceImpl implements AnalyticsService {
             case "NET_PROFIT_PER_GALLON" -> report.getNetProfitPerGallon();
             default -> throw new BadRequestException("Unsupported gas metric: " + metric);
         };
+    }
+
+    private String gasMetricLabel(
+            String metric,
+            GasSalesReportMonthly reportA,
+            GasSalesReportMonthly reportB) {
+        GasDetailMetric detailMetric = parseGasDetailMetric(metric);
+        if (detailMetric == null) {
+            return METRIC_LABELS.get(metric);
+        }
+        String metricName = detailMetric.type() == GasDetailMetricType.VOLUME_SOLD
+                ? "Volume Sold"
+                : "Profit Per Gallon";
+        String fuelName = findFuelName(reportA, detailMetric.fuelTypeId())
+                .or(() -> findFuelName(reportB, detailMetric.fuelTypeId()))
+                .orElse("Unknown Fuel");
+        return metricName + " (" + fuelName + ")";
+    }
+
+    private Optional<String> findFuelName(GasSalesReportMonthly report, Long fuelTypeId) {
+        return report.getDetails().stream()
+                .filter(detail -> detail.getFuelType() != null
+                        && Objects.equals(fuelTypeId, detail.getFuelType().getFuelTypeId()))
+                .map(detail -> detail.getFuelType().getFuelName())
+                .filter(Objects::nonNull)
+                .findFirst();
+    }
+
+    private GasDetailMetric parseGasDetailMetric(String metric) {
+        if (metric == null) {
+            return null;
+        }
+        Matcher matcher = GAS_DETAIL_METRIC_PATTERN.matcher(metric);
+        if (!matcher.matches()) {
+            return null;
+        }
+        try {
+            return new GasDetailMetric(
+                    GasDetailMetricType.valueOf(matcher.group(1)),
+                    Long.parseLong(matcher.group(2)));
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    private enum GasDetailMetricType {
+        VOLUME_SOLD,
+        PROFIT
+    }
+
+    private record GasDetailMetric(GasDetailMetricType type, Long fuelTypeId) {
     }
 
     private AnalyticsResponse executeMultiYearMonthAnalytics(AnalyticsRequest request) {

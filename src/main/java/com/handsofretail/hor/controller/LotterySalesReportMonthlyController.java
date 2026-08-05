@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/lottery-sales/monthly")
+@RequestMapping("/api/v1/admin/lottery-sales/monthly")
 @RequiredArgsConstructor
 public class LotterySalesReportMonthlyController {
 

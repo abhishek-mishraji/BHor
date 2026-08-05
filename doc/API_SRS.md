@@ -1,4 +1,4 @@
-﻿# Software Requirements Specification — Hands Of Retail Backend API
+# Software Requirements Specification — Hands Of Retail Backend API
 
 **Version:** 3.0  
 **Date:** 2026-08-05  
@@ -24,7 +24,7 @@ The backend exposes a Spring Boot 3.x REST API for managing stores, clients, sto
 - Monthly report CRUD, filtering, and Excel upload
 - Yearly report CRUD and filtering
 - Fuel-type management and store fuel-type assignment
-- Gas sales monthly report query endpoints
+- Gas and Lottery sales monthly analytics queries (including "ALL" wildcard metrics)
 - Lottery sales monthly report CRUD
 - Analytics queries for admin and client roles
 
@@ -46,7 +46,7 @@ The backend exposes a Spring Boot 3.x REST API for managing stores, clients, sto
 | `/api/v1/auth/**`        | None                   | Public auth endpoints                                  |
 | `/api/v1/admin/**`       | `ADMIN`                | Admin CRUD and management routes                       |
 | `/api/v1/client/**`      | `CLIENT`               | Client-scoped read-only routes                         |
-| Other implemented routes | Any authenticated user | No additional role restriction in the controller layer |
+| No other operational routes | N/A | All application endpoints are explicitly admin- or client-scoped. |
 
 ### Client-scoped access
 
@@ -1138,10 +1138,9 @@ Example response (JSON):
 
 ### 5.9 Authenticated query endpoints
 
-These routes do not have admin-only restrictions in the controller; they require an authenticated user.
+#### `GET /api/v1/admin/fuel-types`
 
-#### `GET /api/v1/fuel-types`
-
+- Auth: `ADMIN`
 - Response data: list of active fuel types with `fuelTypeId`, `fuelName`, `active`
 
 Example request (JSON):
@@ -1167,8 +1166,9 @@ Example response (JSON):
 }
 ```
 
-#### `GET /api/v1/fuel-types/{id}`
+#### `GET /api/v1/admin/fuel-types/{id}`
 
+- Auth: `ADMIN`
 - Response data: single fuel type object
 
 Example request (JSON):
@@ -1192,8 +1192,9 @@ Example response (JSON):
 }
 ```
 
-#### `GET /api/v1/stores/{storeId}/fuel-types`
+#### `GET /api/v1/admin/stores/{storeId}/fuel-types`
 
+- Auth: `ADMIN`
 - Response data: list of fuel types assigned to a store
 
 Example request (JSON):
@@ -1219,8 +1220,9 @@ Example response (JSON):
 }
 ```
 
-#### `GET /api/v1/gas-sales/monthly`
+#### `GET /api/v1/admin/gas-sales/monthly`
 
+- Auth: `ADMIN`
 - Optional query params:
   - `storeId`
   - `month`
@@ -1256,8 +1258,9 @@ Example response (JSON):
 }
 ```
 
-#### `GET /api/v1/gas-sales/monthly/{id}`
+#### `GET /api/v1/admin/gas-sales/monthly/{id}`
 
+- Auth: `ADMIN`
 - Response data: single gas sales monthly report with nested detail rows
 
 Example request (JSON):
@@ -1288,8 +1291,145 @@ Example response (JSON):
 }
 ```
 
-#### `POST /api/v1/lottery-sales/monthly`
+#### `POST /api/v1/admin/gas-sales/monthly`
 
+- Auth: `ADMIN`
+- Creates one gas sales report for a store and reporting period.
+- `totalVolumeSold`, `netProfitPerGallon`, and `netProfit` are entered by the administrator and are not calculated by the backend.
+- Each detail requires `fuelTypeId`, `volumeSold`, and `profitPerGallon`.
+- `total_volume_sold`, `net_profit_per_gallon`, and `net_profit` are also accepted as JSON aliases.
+
+Example request (JSON):
+
+```json
+{
+  "storeId": 1,
+  "reportMonth": 8,
+  "reportYear": 2026,
+  "creditFees": 125.50,
+  "totalVolumeSold": 5432.00,
+  "netProfitPerGallon": 12.00,
+  "netProfit": 1254.00,
+  "details": [
+    {
+      "fuelTypeId": 1,
+      "volumeSold": 97273.00,
+      "profitPerGallon": 0.32
+    },
+    {
+      "fuelTypeId": 2,
+      "volumeSold": 45000.00,
+      "profitPerGallon": 0.28
+    }
+  ]
+}
+```
+
+Example response (JSON):
+
+```json
+{
+  "success": true,
+  "message": "Gas sales monthly report created",
+  "data": {
+    "gasSalesReportMonthlyId": 4,
+    "storeId": 1,
+    "storeName": "Downtown Store",
+    "reportMonth": 8,
+    "reportYear": 2026,
+    "creditFees": 125.50,
+    "totalVolumeSold": 5432.00,
+    "netProfitPerGallon": 12.00,
+    "netProfit": 1254.00,
+    "details": [
+      {
+        "gasSalesReportDetailId": 10,
+        "gasSalesReportMonthlyId": 4,
+        "fuelTypeId": 1,
+        "fuelName": "Regular 87",
+        "volumeSold": 97273.00,
+        "profitPerGallon": 0.32
+      }
+    ]
+  },
+  "timestamp": "2026-08-05T12:00:00Z"
+}
+```
+
+#### `PUT /api/v1/admin/gas-sales/monthly/{id}`
+
+- Auth: `ADMIN`
+- Replaces the report’s credit fees, administrator-entered totals, and detail rows.
+- The report’s store and reporting period are immutable through this endpoint.
+
+Example request (JSON):
+
+```json
+{
+  "creditFees": 130.00,
+  "totalVolumeSold": 5500.00,
+  "netProfitPerGallon": 12.25,
+  "netProfit": 1300.00,
+  "details": [
+    {
+      "fuelTypeId": 1,
+      "volumeSold": 98000.00,
+      "profitPerGallon": 0.33
+    }
+  ]
+}
+```
+
+Example response (JSON):
+
+```json
+{
+  "success": true,
+  "message": "Gas sales monthly report updated",
+  "data": {
+    "gasSalesReportMonthlyId": 4,
+    "storeId": 1,
+    "storeName": "Downtown Store",
+    "reportMonth": 8,
+    "reportYear": 2026,
+    "creditFees": 130.00,
+    "totalVolumeSold": 5500.00,
+    "netProfitPerGallon": 12.25,
+    "netProfit": 1300.00,
+    "details": [
+      {
+        "gasSalesReportDetailId": 10,
+        "gasSalesReportMonthlyId": 4,
+        "fuelTypeId": 1,
+        "fuelName": "Regular 87",
+        "volumeSold": 98000.00,
+        "profitPerGallon": 0.33
+      }
+    ]
+  },
+  "timestamp": "2026-08-05T12:00:00Z"
+}
+```
+
+#### `DELETE /api/v1/admin/gas-sales/monthly/{id}`
+
+- Auth: `ADMIN`
+- Deletes the gas sales report and its associated detail rows.
+
+Example response (JSON):
+
+```json
+{
+  "success": true,
+  "message": "Gas sales monthly report deleted",
+  "data": null,
+  "timestamp": "2026-08-05T12:00:00Z"
+}
+```
+
+#### `POST /api/v1/admin/lottery-sales/monthly`
+
+- Auth: `ADMIN`
 - Request body:
   - `storeId`
   - `reportMonth`
@@ -1333,8 +1473,9 @@ Example response (JSON):
 }
 ```
 
-#### `GET /api/v1/lottery-sales/monthly`
+#### `GET /api/v1/admin/lottery-sales/monthly`
 
+- Auth: `ADMIN`
 - Optional query params:
   - `storeId`
   - `month`
@@ -1369,8 +1510,9 @@ Example response (JSON):
 }
 ```
 
-#### `PUT /api/v1/lottery-sales/monthly/{reportId}`
+#### `PUT /api/v1/admin/lottery-sales/monthly/{reportId}`
 
+- Auth: `ADMIN`
 - Request body: same shape as create
 
 Example request (JSON):
@@ -1397,8 +1539,9 @@ Example response (JSON):
 }
 ```
 
-#### `DELETE /api/v1/lottery-sales/monthly/{reportId}`
+#### `DELETE /api/v1/admin/lottery-sales/monthly/{reportId}`
 
+- Auth: `ADMIN`
 - Deletes the report by ID
 
 Example request (JSON):

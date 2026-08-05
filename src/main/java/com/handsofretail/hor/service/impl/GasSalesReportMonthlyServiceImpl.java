@@ -20,7 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,8 +30,6 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlyService {
-
-    private static final int MONEY_SCALE = 4;
 
     private final GasSalesReportMonthlyRepository reportRepository;
     private final StoreRepository storeRepository;
@@ -45,10 +42,14 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
             Integer reportMonth,
             Integer reportYear,
             BigDecimal creditFees,
+            BigDecimal totalVolumeSold,
+            BigDecimal netProfitPerGallon,
+            BigDecimal netProfit,
             List<GasSalesReportDetail> details) {
         Store store = getStore(storeId);
         validatePeriod(reportMonth, reportYear);
         validateCreditFees(creditFees);
+        validateReportMetrics(totalVolumeSold, netProfitPerGallon, netProfit);
         if (reportRepository.existsByStoreStoreIdAndReportMonthAndReportYear(storeId, reportMonth, reportYear)) {
             throw new DuplicateResourceException("Gas sales report already exists for this store and period");
         }
@@ -58,6 +59,9 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
                 .reportMonth(reportMonth)
                 .reportYear(reportYear)
                 .creditFees(creditFees)
+                .totalVolumeSold(totalVolumeSold)
+                .netProfitPerGallon(netProfitPerGallon)
+                .netProfit(netProfit)
                 .build();
         replaceDetails(report, details);
         return save(report);
@@ -68,10 +72,17 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
     public GasSalesReportMonthly updateReport(
             Long reportId,
             BigDecimal creditFees,
+            BigDecimal totalVolumeSold,
+            BigDecimal netProfitPerGallon,
+            BigDecimal netProfit,
             List<GasSalesReportDetail> details) {
         GasSalesReportMonthly report = getReportById(reportId);
         validateCreditFees(creditFees);
+        validateReportMetrics(totalVolumeSold, netProfitPerGallon, netProfit);
         report.setCreditFees(creditFees);
+        report.setTotalVolumeSold(totalVolumeSold);
+        report.setNetProfitPerGallon(netProfitPerGallon);
+        report.setNetProfit(netProfit);
         replaceDetails(report, details);
         return save(report);
     }
@@ -123,10 +134,11 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
         List<GasSalesReportDetail> details = submittedDetails == null ? List.of() : submittedDetails;
         Map<Long, FuelType> allowedFuelTypes = getAllowedFuelTypes(report.getStore().getStoreId());
         Set<Long> submittedFuelTypeIds = new HashSet<>();
-        BigDecimal totalVolumeSold = BigDecimal.ZERO;
-        BigDecimal grossProfit = BigDecimal.ZERO;
+        Map<Long, GasSalesReportDetail> existingDetailsByFuelTypeId = new HashMap<>();
+        for (GasSalesReportDetail existingDetail : report.getDetails()) {
+            existingDetailsByFuelTypeId.put(existingDetail.getFuelType().getFuelTypeId(), existingDetail);
+        }
 
-        report.getDetails().clear();
         for (GasSalesReportDetail submittedDetail : details) {
             validateDetail(submittedDetail);
             Long fuelTypeId = submittedDetail.getFuelType().getFuelTypeId();
@@ -141,24 +153,22 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
 
             BigDecimal volumeSold = submittedDetail.getVolumeSold();
             BigDecimal profitPerGallon = submittedDetail.getProfitPerGallon();
-            GasSalesReportDetail detail = GasSalesReportDetail.builder()
-                    .gasSalesReportMonthly(report)
-                    .fuelType(fuelType)
-                    .volumeSold(volumeSold)
-                    .profitPerGallon(profitPerGallon)
-                    .build();
-            report.getDetails().add(detail);
-            totalVolumeSold = totalVolumeSold.add(volumeSold);
-            grossProfit = grossProfit.add(volumeSold.multiply(profitPerGallon));
+            GasSalesReportDetail existingDetail = existingDetailsByFuelTypeId.get(fuelTypeId);
+            if (existingDetail != null) {
+                existingDetail.setVolumeSold(volumeSold);
+                existingDetail.setProfitPerGallon(profitPerGallon);
+            } else {
+                GasSalesReportDetail detail = GasSalesReportDetail.builder()
+                        .gasSalesReportMonthly(report)
+                        .fuelType(fuelType)
+                        .volumeSold(volumeSold)
+                        .profitPerGallon(profitPerGallon)
+                        .build();
+                report.getDetails().add(detail);
+            }
         }
-
-        BigDecimal netProfit = grossProfit.subtract(report.getCreditFees());
-        BigDecimal netProfitPerGallon = totalVolumeSold.signum() == 0
-                ? BigDecimal.ZERO
-                : netProfit.divide(totalVolumeSold, MONEY_SCALE, RoundingMode.HALF_UP);
-        report.setTotalVolumeSold(scale(totalVolumeSold));
-        report.setNetProfit(scale(netProfit));
-        report.setNetProfitPerGallon(scale(netProfitPerGallon));
+        report.getDetails().removeIf(detail ->
+                !submittedFuelTypeIds.contains(detail.getFuelType().getFuelTypeId()));
     }
 
     private Map<Long, FuelType> getAllowedFuelTypes(Long storeId) {
@@ -184,6 +194,21 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
     private void validateCreditFees(BigDecimal creditFees) {
         if (creditFees == null || creditFees.signum() < 0) {
             throw new BadRequestException("Credit fees must be zero or greater");
+        }
+    }
+
+    private void validateReportMetrics(
+            BigDecimal totalVolumeSold,
+            BigDecimal netProfitPerGallon,
+            BigDecimal netProfit) {
+        if (totalVolumeSold == null || totalVolumeSold.signum() < 0) {
+            throw new BadRequestException("Total volume sold must be zero or greater");
+        }
+        if (netProfitPerGallon == null || netProfitPerGallon.signum() < 0) {
+            throw new BadRequestException("Net profit per gallon must be zero or greater");
+        }
+        if (netProfit == null || netProfit.signum() < 0) {
+            throw new BadRequestException("Net profit must be zero or greater");
         }
     }
 
@@ -216,7 +241,4 @@ public class GasSalesReportMonthlyServiceImpl implements GasSalesReportMonthlySe
                 .orElseThrow(() -> new ResourceNotFoundException("Store not found"));
     }
 
-    private BigDecimal scale(BigDecimal value) {
-        return value.setScale(MONEY_SCALE, RoundingMode.HALF_UP);
-    }
 }

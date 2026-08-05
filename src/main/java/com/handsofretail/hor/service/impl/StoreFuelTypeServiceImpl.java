@@ -62,6 +62,10 @@ public class StoreFuelTypeServiceImpl implements StoreFuelTypeService {
         }
 
         storeFuelTypeRepository.deleteByStoreStoreId(storeId);
+        // Flush orphaned mappings before inserting replacements. Otherwise Hibernate
+        // may issue the INSERT first and violate the store/fuel unique constraint
+        // when a mapping is retained in the replacement set.
+        storeFuelTypeRepository.flush();
         List<StoreFuelType> mappings = uniqueFuelTypeIds.stream()
                 .map(id -> StoreFuelType.builder()
                         .store(store)

@@ -1,4 +1,4 @@
-﻿# Analytics API — Software Requirements Specification
+# Analytics API — Software Requirements Specification
 
 **Version:** 2.0  
 **Date:** 2026-08-05  
@@ -20,6 +20,7 @@ The analytics API exposes dynamic aggregated queries for daily, monthly, and gas
 | `DAILY`       | `/api/v1/admin/analytics/reports` and `/api/v1/client/analytics/reports` | Aggregates daily report values                      |
 | `MONTHLY`     | `/api/v1/admin/analytics/reports` and `/api/v1/client/analytics/reports` | Aggregates monthly report values                    |
 | `GAS_MONTHLY` | `/api/v1/admin/analytics/reports` and `/api/v1/client/analytics/reports` | Compares two gas-monthly periods for a single store |
+| `LOTTERY_MONTHLY` | `/api/v1/admin/analytics/reports` and `/api/v1/client/analytics/reports` | Compares two lottery-monthly periods for a single store |
 
 ---
 
@@ -44,7 +45,7 @@ Example request body (JSON):
 
 | Parameter          | Type             | Required                   | Description                                                               |
 | ------------------ | ---------------- | -------------------------- | ------------------------------------------------------------------------- |
-| `reportType`       | enum             | yes                        | `DAILY`, `MONTHLY`, or `GAS_MONTHLY`                                      |
+| `reportType`       | enum             | yes                        | `DAILY`, `MONTHLY`, `GAS_MONTHLY`, or `LOTTERY_MONTHLY`                                      |
 | `groupBy`          | enum             | yes                        | `DATE`, `MONTH`, `QUARTER`, `YEAR`, `STORE`, `DEPARTMENT`                 |
 | `metric`           | list of strings  | yes                        | One or more metric keys                                                   |
 | `aggregate`        | enum             | no                         | `SUM`, `AVG`, `MAX`, or `MIN` (defaults to `SUM`)                         |
@@ -55,10 +56,10 @@ Example request body (JSON):
 | `month`            | integer          | no                         | Monthly-only filter                                                       |
 | `year`             | list of integers | no                         | Monthly-only year filter                                                  |
 | `departmentId`     | string           | no                         | Monthly-only department filter                                            |
-| `comparisonAMonth` | integer          | required for `GAS_MONTHLY` | First comparison month                                                    |
-| `comparisonAYear`  | integer          | required for `GAS_MONTHLY` | First comparison year                                                     |
-| `comparisonBMonth` | integer          | required for `GAS_MONTHLY` | Second comparison month                                                   |
-| `comparisonBYear`  | integer          | required for `GAS_MONTHLY` | Second comparison year                                                    |
+| `comparisonAMonth` | integer          | required for `GAS_MONTHLY`, `LOTTERY_MONTHLY` | First comparison month                                                    |
+| `comparisonAYear`  | integer          | required for `GAS_MONTHLY`, `LOTTERY_MONTHLY` | First comparison year                                                     |
+| `comparisonBMonth` | integer          | required for `GAS_MONTHLY`, `LOTTERY_MONTHLY` | Second comparison month                                                   |
+| `comparisonBYear`  | integer          | required for `GAS_MONTHLY`, `LOTTERY_MONTHLY` | Second comparison year                                                    |
 
 ### Response shape
 
@@ -167,6 +168,13 @@ Valid metrics:
 - `TOTAL_VOLUME_SOLD`
 - `NET_PROFIT`
 - `NET_PROFIT_PER_GALLON`
+- `DETAIL_VOLUME_SOLD_{fuelTypeId}` — volume sold for the specified fuel type, for example `DETAIL_VOLUME_SOLD_1`
+- `DETAIL_PROFIT_{fuelTypeId}` — profit per gallon for the specified fuel type, for example `DETAIL_PROFIT_1`
+- `ALL` — automatically expands to all 4 root metrics and all dynamically available detail metrics for the compared reports.
+
+Dynamic detail metrics use a positive numeric `fuelTypeId`. If a valid fuel type is not present in one
+of the compared reports, its value for that comparison period is returned as `0`. Detail datasets dynamically
+resolve the fuel type ID to the actual Fuel Name and generate human-readable labels such as `Volume Sold (Regular Unleaded)` and `Profit Per Gallon (Premium Unleaded)`.
 
 Additional rules:
 
@@ -175,6 +183,34 @@ Additional rules:
 - Each comparison period must be a valid month/year pair.
 
 The response for gas-monthly analytics always uses two labels: `comparisonA` and `comparisonB`, and includes extra fields in each dataset:
+
+- `valueA`
+- `valueB`
+- `difference`
+- `percentageDifference`
+
+### 3.5 Lottery-monthly analytics
+
+Valid `groupBy` value:
+
+- `MONTH` only
+
+Valid metrics:
+
+- `ONLINE_SALES`
+- `SCRATCH_OFF_SALES`
+- `ONLINE_CASHES`
+- `SCRATCH_OFF_CASHES`
+- `COMMISSION`
+- `ALL` — automatically expands to include all 5 lottery metrics.
+
+Additional rules:
+
+- Exactly one `storeId` is required.
+- `comparisonAMonth`, `comparisonAYear`, `comparisonBMonth`, and `comparisonBYear` are all required.
+- Each comparison period must be a valid month/year pair.
+
+The response for lottery-monthly analytics always uses two labels: `comparisonA` and `comparisonB`, and includes the same extra fields in each dataset:
 
 - `valueA`
 - `valueB`
@@ -305,10 +341,114 @@ GET /api/v1/admin/analytics/reports?reportType=MONTHLY&groupBy=MONTH&metric=gros
 GET /api/v1/admin/analytics/reports?reportType=GAS_MONTHLY&groupBy=MONTH&metric=CREDIT_FEES&storeIds=1&comparisonAMonth=1&comparisonAYear=2026&comparisonBMonth=2&comparisonBYear=2026
 ```
 
+### 5.4 Gas-monthly detail comparison example
+
+```http
+GET /api/v1/admin/analytics/reports?reportType=GAS_MONTHLY&groupBy=MONTH&metric=DETAIL_VOLUME_SOLD_1&metric=DETAIL_PROFIT_1&storeIds=1&comparisonAMonth=1&comparisonAYear=2026&comparisonBMonth=2&comparisonBYear=2026
+```
+
+### 5.5 Gas-monthly ALL metric example
+
+```http
+GET /api/v1/admin/analytics/reports?reportType=GAS_MONTHLY&groupBy=MONTH&metric=ALL&storeIds=1&comparisonAMonth=1&comparisonAYear=2026&comparisonBMonth=2&comparisonBYear=2026
+```
+
+Example response (JSON):
+
+```json
+{
+  "success": true,
+  "message": "Analytics fetched",
+  "data": {
+    "labels": ["comparisonA", "comparisonB"],
+    "datasets": [
+      {
+        "label": "Total Volume Sold",
+        "metric": "TOTAL_VOLUME_SOLD",
+        "data": [5000.0, 5200.0],
+        "valueA": 5000.0,
+        "valueB": 5200.0,
+        "difference": 200.0,
+        "percentageDifference": 3.85
+      },
+      {
+        "label": "Volume Sold (Regular Unleaded)",
+        "metric": "DETAIL_VOLUME_SOLD_1",
+        "data": [2000.0, 2100.0],
+        "valueA": 2000.0,
+        "valueB": 2100.0,
+        "difference": 100.0,
+        "percentageDifference": 4.76
+      }
+    ],
+    "meta": {
+      "reportType": "GAS_MONTHLY",
+      "groupBy": "MONTH",
+      "storeId": 1,
+      "comparisonAMonth": 1,
+      "comparisonAYear": 2026,
+      "comparisonBMonth": 2,
+      "comparisonBYear": 2026,
+      "totalDataPoints": 2
+    }
+  },
+  "timestamp": "2026-08-05T12:00:00Z"
+}
+```
+
+### 5.6 Lottery-monthly example
+
+```http
+GET /api/v1/admin/analytics/reports?reportType=LOTTERY_MONTHLY&groupBy=MONTH&metric=ALL&storeIds=1&comparisonAMonth=1&comparisonAYear=2026&comparisonBMonth=2&comparisonBYear=2026
+```
+
+Example response (JSON):
+
+```json
+{
+  "success": true,
+  "message": "Analytics fetched",
+  "data": {
+    "labels": ["comparisonA", "comparisonB"],
+    "datasets": [
+      {
+        "label": "Online Sales",
+        "metric": "ONLINE_SALES",
+        "data": [12000.50, 13500.00],
+        "valueA": 12000.50,
+        "valueB": 13500.00,
+        "difference": -1499.50,
+        "percentageDifference": -11.11
+      },
+      {
+        "label": "Commission",
+        "metric": "COMMISSION",
+        "data": [1025.00, 1075.00],
+        "valueA": 1025.00,
+        "valueB": 1075.00,
+        "difference": -50.00,
+        "percentageDifference": -4.65
+      }
+    ],
+    "meta": {
+      "reportType": "LOTTERY_MONTHLY",
+      "groupBy": "MONTH",
+      "storeId": 1,
+      "comparisonAMonth": 1,
+      "comparisonAYear": 2026,
+      "comparisonBMonth": 2,
+      "comparisonBYear": 2026,
+      "totalDataPoints": 2
+    }
+  },
+  "timestamp": "2026-08-05T12:00:00Z"
+}
+```
+
 ---
 
 ## 6. Implementation notes
 
 - The analytics layer uses Criteria API and JPA tuples rather than multiple application-side aggregations.
 - The response is intentionally chart-oriented and can be consumed by chart libraries such as Chart.js, Recharts, or ApexCharts.
-- The current implementation does not expose yearly report analytics; only daily, monthly, and gas-monthly report analytics are implemented.
+- The current implementation does not expose yearly report analytics; only daily, monthly, gas-monthly, and lottery-monthly report analytics are implemented.

@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 @RestController("fuelTypeQueryController")
-@RequestMapping("/api/v1/fuel-types")
+@RequestMapping("/api/v1/admin/fuel-types")
 @RequiredArgsConstructor
 public class FuelTypeController {
 

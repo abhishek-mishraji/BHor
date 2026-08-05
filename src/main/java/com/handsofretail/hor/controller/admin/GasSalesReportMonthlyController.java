@@ -39,6 +39,9 @@ public class GasSalesReportMonthlyController {
                 request.getReportMonth(),
                 request.getReportYear(),
                 request.getCreditFees(),
+                request.getTotalVolumeSold(),
+                request.getNetProfitPerGallon(),
+                request.getNetProfit(),
                 toDetails(request.getDetails()));
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Gas sales monthly report created",
@@ -52,6 +55,9 @@ public class GasSalesReportMonthlyController {
         GasSalesReportMonthly report = reportService.updateReport(
                 id,
                 request.getCreditFees(),
+                request.getTotalVolumeSold(),
+                request.getNetProfitPerGallon(),
+                request.getNetProfit(),
                 toDetails(request.getDetails()));
         return ResponseEntity.ok(ApiResponse.success("Gas sales monthly report updated",
                 GasSalesReportMonthlyMapper.toResponse(report)));
