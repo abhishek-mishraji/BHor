@@ -42,6 +42,7 @@ out/
 .claude
 
 # H2 DB
+/database/
 /database/h2/*.mv.db
 *.mv.db
-database/h2
+
